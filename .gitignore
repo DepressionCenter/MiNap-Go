@@ -14,3 +14,15 @@
 # Ignore all data files except the one that's tracked
 # Example: .csv
 # Example: !sample-data.csv
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Editor cruft
+.vscode/
+.idea/
+*.swp

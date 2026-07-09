@@ -1,0 +1,106 @@
+<!--
+This file is part of MiNap Go
+Index.html
+Author(s): Gabriel Mongefranco
+Created: 2026-07-09
+Summary: Main HTML template for the MiNap Go web app UI (login, home, history, sleeping overlay).
+Notes: See README file for documentation and full license information.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Stylesheet'); ?>
+</head>
+<body>
+  <main class="card" role="main">
+
+    <!-- LOGIN -->
+    <section id="screen-login" class="screen">
+      <div class="brand">
+        <div class="brand-glyph">&#127769;</div>
+        <h1>MiNap</h1>
+        <p class="tagline">One tap to sleep. One tap to wake.</p>
+      </div>
+
+      <label class="field">
+        <span>Study ID</span>
+        <input id="in-study" type="text" inputmode="text" autocomplete="off" placeholder="e.g. SLEEP-01">
+      </label>
+
+      <label class="field">
+        <span>Participant ID</span>
+        <input id="in-part" type="text" inputmode="text" autocomplete="off" placeholder="e.g. P0142">
+      </label>
+
+      <label class="field">
+        <span>Time zone</span>
+        <select id="in-tz"></select>
+      </label>
+
+      <button id="btn-start" class="btn btn-primary">Start</button>
+      <p class="note">Demo only. Use opaque IDs, no personal info.</p>
+    </section>
+
+    <!-- HOME (awake): only the Sleep action -->
+    <section id="screen-home" class="screen hidden">
+      <header class="home-head">
+        <div>
+          <p class="who"><span id="who-study"></span> &middot; <span id="who-part"></span></p>
+          <p class="status" id="status-chip">Ready</p>
+        </div>
+        <button id="btn-logout" class="link">Log out</button>
+      </header>
+
+      <button id="btn-sleep" class="big big-sleep wide" aria-label="Go to sleep">
+        <span class="big-glyph">&#127769;</span>
+        <span class="big-label">Go to sleep</span>
+      </button>
+
+      <button id="btn-history" class="link center">View history</button>
+    </section>
+
+    <!-- HISTORY -->
+    <section id="screen-history" class="screen hidden">
+      <header class="home-head">
+        <h2>Your sleep</h2>
+        <button id="btn-back" class="link">Back</button>
+      </header>
+      <div id="history-list" class="history"></div>
+    </section>
+
+  </main>
+
+  <!-- SLEEPING overlay: full screen, stays until Wake is tapped -->
+  <div id="sleep-overlay" class="overlay hidden" role="dialog" aria-label="Sleeping">
+    <span class="z z1">z</span>
+    <span class="z z2">z</span>
+    <span class="z z3">z</span>
+    <div class="overlay-inner">
+      <div class="overlay-glyph">&#127769;</div>
+      <p class="overlay-title">Sleeping</p>
+      <p id="asleep-since" class="overlay-sub"></p>
+      <button id="btn-wake" class="big big-wake wide" aria-label="Wake up">
+        <span class="big-glyph">&#9728;&#65039;</span>
+        <span class="big-label">Wake up</span>
+      </button>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <?!= include('JavaScript'); ?>
+</body>
+</html>

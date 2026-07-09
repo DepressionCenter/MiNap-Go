@@ -1,0 +1,333 @@
+<!--
+This file is part of MiNap Go
+JavaScript.html
+Author(s): Gabriel Mongefranco
+Created: 2026-07-09
+Summary: Client-side logic: session/auth, sleep state machine, history rendering, and sync with the server.
+Notes: See README file for documentation and full license information.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<script>
+  var APP_VERSION = '1.0.0';
+  var AUTO_WAKE_HOURS = 12;
+  var K_SESSION = 'minap.session';
+  var K_HISTORY = 'minap.history';
+  var K_QUEUE = 'minap.queue';
+
+  // ----- storage helpers -----
+  function load(key, fallback) {
+    try { var v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+    catch (e) { return fallback; }
+  }
+  function save(key, val) {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {}
+  }
+  function clearAll() {
+    [K_SESSION, K_HISTORY, K_QUEUE].forEach(function (k) {
+      try { localStorage.removeItem(k); } catch (e) {}
+    });
+  }
+
+  // ----- screens -----
+  function show(id) {
+    ['screen-login', 'screen-home', 'screen-history'].forEach(function (s) {
+      document.getElementById(s).classList.toggle('hidden', s !== id);
+    });
+  }
+  function showOverlay(on) {
+    document.getElementById('sleep-overlay').classList.toggle('hidden', !on);
+  }
+
+  var toastTimer = null;
+  function toast(msg) {
+    var t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.remove('hidden');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.add('hidden'); }, 2200);
+  }
+
+  // ----- timezone dropdown -----
+  // Best-effort local timezone via Intl; falls back to a sane default if unavailable.
+  function detectTz() {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone || 'America/Detroit'; }
+    catch (e) { return 'America/Detroit'; }
+  }
+  // Populate the timezone dropdown, defaulting to the browser-detected zone.
+  function buildTzOptions() {
+    var sel = document.getElementById('in-tz');
+    var auto = detectTz();
+    var zones = [
+      'America/New_York', 'America/Detroit', 'America/Chicago', 'America/Denver',
+      'America/Phoenix', 'America/Los_Angeles', 'America/Anchorage', 'Pacific/Honolulu',
+      'America/Toronto', 'Europe/London', 'UTC'
+    ];
+    if (zones.indexOf(auto) === -1) zones.unshift(auto);
+    sel.innerHTML = '';
+    zones.forEach(function (z) {
+      var o = document.createElement('option');
+      o.value = z;
+      o.textContent = (z === auto) ? (z + ' (detected)') : z;
+      if (z === auto) o.selected = true;
+      sel.appendChild(o);
+    });
+  }
+
+  // ----- events -----
+  function uuid() {
+    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+
+  function buildEvent(type, session, epochMs) {
+    var ms = epochMs || Date.now();
+    var d = new Date(ms);
+    return {
+      record_id: uuid(),
+      study_id: session.study_id,
+      participant_id: session.participant_id,
+      event_type: type,
+      event_epoch_ms: ms,
+      event_iso_utc: d.toISOString(),
+      event_tz: session.tz,
+      event_local: d.toLocaleString('en-US', { timeZone: session.tz, hour12: true }),
+      app_version: APP_VERSION
+    };
+  }
+
+  function sendEvent(payload, onDone) {
+    google.script.run
+      .withSuccessHandler(function (saved) { onDone(true, saved); })
+      .withFailureHandler(function () { onDone(false, payload); })
+      .logEvent(payload);
+  }
+
+  // Drain the offline queue one item at a time; a failure halts the drain until the next call.
+  function flushQueue() {
+    var q = load(K_QUEUE, []);
+    if (!q.length) return;
+    var next = q.shift();
+    save(K_QUEUE, q);
+    sendEvent(next, function (ok, res) {
+      if (!ok) { var qq = load(K_QUEUE, []); qq.push(res); save(K_QUEUE, qq); }
+      else { flushQueue(); }
+    });
+  }
+
+  // append locally + push to server (with offline retry queue)
+  function recordEvent(ev) {
+    var hist = load(K_HISTORY, []);
+    hist.unshift(ev);
+    save(K_HISTORY, hist);
+    sendEvent(ev, function (ok) {
+      if (!ok) {
+        var q = load(K_QUEUE, []); q.push(ev); save(K_QUEUE, q);
+      }
+    });
+  }
+
+  // ----- sleep state machine -----
+  // Sleeping iff the most recent event is a SLEEP with no WAKE after it.
+  function computeState() {
+    var hist = load(K_HISTORY, []);
+    if (!hist.length) return 'AWAKE';
+    return hist[0].event_type === 'SLEEP' ? 'SLEEPING' : 'AWAKE';
+  }
+
+  // The open SLEEP event, if the user is currently asleep.
+  function topSleep() {
+    var hist = load(K_HISTORY, []);
+    return (hist.length && hist[0].event_type === 'SLEEP') ? hist[0] : null;
+  }
+
+  // If asleep for >= AUTO_WAKE_HOURS, auto-log a wake on app open.
+  function maybeAutoWake() {
+    var sleep = topSleep();
+    if (!sleep) return false;
+    var session = load(K_SESSION, null);
+    if (!session) return false;
+    var hours = (Date.now() - Number(sleep.event_epoch_ms)) / 3600000;
+    if (hours < AUTO_WAKE_HOURS) return false;
+    var ev = buildEvent('WAKE', session);
+    ev.auto = true; // local display flag only
+    recordEvent(ev);
+    toast('Auto-logged wake (12h elapsed)');
+    return true;
+  }
+
+  function fmtClock(epochMs, tz) {
+    return new Date(epochMs).toLocaleTimeString('en-US',
+      { timeZone: tz, hour: 'numeric', minute: '2-digit' });
+  }
+  function sameDay(epochMs, tz) {
+    var opt = { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' };
+    return new Date(epochMs).toLocaleDateString('en-US', opt) ===
+           new Date().toLocaleDateString('en-US', opt);
+  }
+
+  function applyHomeState() {
+    maybeAutoWake();
+    var st = computeState();
+    if (st === 'SLEEPING') {
+      var s = topSleep();
+      var label = fmtClock(s.event_epoch_ms, s.event_tz);
+      if (!sameDay(s.event_epoch_ms, s.event_tz)) {
+        label = new Date(s.event_epoch_ms)
+          .toLocaleDateString('en-US', { timeZone: s.event_tz, weekday: 'short' }) + ' ' + label;
+      }
+      document.getElementById('asleep-since').textContent = 'Since ' + label;
+      showOverlay(true);
+    } else {
+      showOverlay(false);
+    }
+    renderStatus();
+  }
+
+  function renderStatus() {
+    var chip = document.getElementById('status-chip');
+    chip.textContent = computeState() === 'SLEEPING' ? 'Sleeping' : 'Ready';
+  }
+
+  function onSleep() {
+    var session = load(K_SESSION, null);
+    if (!session) { show('screen-login'); return; }
+    recordEvent(buildEvent('SLEEP', session));
+    toast('Sleep logged ' + fmtClock(Date.now(), session.tz));
+    applyHomeState();
+  }
+
+  function onWake() {
+    var session = load(K_SESSION, null);
+    if (!session) { show('screen-login'); return; }
+    recordEvent(buildEvent('WAKE', session));
+    toast('Good morning. Wake logged ' + fmtClock(Date.now(), session.tz));
+    applyHomeState();
+  }
+
+  // ----- history rendering -----
+  function pairNights(events) {
+    var asc = events.slice().sort(function (a, b) { return a.event_epoch_ms - b.event_epoch_ms; });
+    var nights = [];
+    var openSleep = null;
+    asc.forEach(function (e) {
+      if (e.event_type === 'SLEEP') {
+        if (openSleep) nights.push({ sleep: openSleep, wake: null });
+        openSleep = e;
+      } else {
+        nights.push({ sleep: openSleep, wake: e });
+        openSleep = null;
+      }
+    });
+    if (openSleep) nights.push({ sleep: openSleep, wake: null });
+    return nights.reverse();
+  }
+
+  function fmtTime(ev) { return ev ? fmtClock(ev.event_epoch_ms, ev.event_tz) : '--'; }
+  function fmtDate(ev) {
+    return new Date(ev.event_epoch_ms).toLocaleDateString('en-US',
+      { timeZone: ev.event_tz, weekday: 'short', month: 'short', day: 'numeric' });
+  }
+  function fmtDur(ms) {
+    var m = Math.round(ms / 60000), h = Math.floor(m / 60);
+    return h + 'h ' + (m % 60) + 'm';
+  }
+
+  function renderHistory() {
+    var box = document.getElementById('history-list');
+    var hist = load(K_HISTORY, []);
+    if (!hist.length) {
+      box.innerHTML = '<div class="empty"><div class="moon">&#127769;</div><p>No nights yet. Tap Go to sleep to begin.</p></div>';
+      return;
+    }
+    var nights = pairNights(hist);
+    box.innerHTML = nights.map(function (n) {
+      var anchor = n.sleep || n.wake;
+      var pill;
+      if (n.sleep && n.wake) {
+        var auto = n.wake.auto ? ' auto' : '';
+        var lbl = n.wake.auto ? 'auto ' : '';
+        pill = '<span class="pill' + auto + '">' + lbl + fmtDur(n.wake.event_epoch_ms - n.sleep.event_epoch_ms) + '</span>';
+      } else {
+        pill = '<span class="pill open">' + (n.sleep ? 'in progress' : 'wake only') + '</span>';
+      }
+      return '' +
+        '<div class="night">' +
+          '<div>' +
+            '<div class="date">' + fmtDate(anchor) + '</div>' +
+            '<div class="times">Sleep ' + fmtTime(n.sleep) + ' &middot; Wake ' + fmtTime(n.wake) + '</div>' +
+          '</div>' + pill +
+        '</div>';
+    }).join('');
+  }
+
+  function refreshHistory(thenApplyHome) {
+    var session = load(K_SESSION, null);
+    if (!session) return;
+    google.script.run
+      .withSuccessHandler(function (rows) {
+        if (rows && rows.length) save(K_HISTORY, rows);
+        if (thenApplyHome) applyHomeState();
+        if (!document.getElementById('screen-history').classList.contains('hidden')) renderHistory();
+      })
+      .withFailureHandler(function () {})
+      .getHistory({ study_id: session.study_id, participant_id: session.participant_id });
+  }
+
+  // ----- auth / boot -----
+  function doStart() {
+    var study = document.getElementById('in-study').value.trim();
+    var part = document.getElementById('in-part').value.trim();
+    var tz = document.getElementById('in-tz').value;
+    if (!study || !part) { toast('Enter Study ID and Participant ID'); return; }
+    save(K_SESSION, { study_id: study, participant_id: part, tz: tz, created_at: new Date().toISOString() });
+    enterHome();
+  }
+
+  function enterHome() {
+    var session = load(K_SESSION, null);
+    document.getElementById('who-study').textContent = session.study_id;
+    document.getElementById('who-part').textContent = session.participant_id;
+    show('screen-home');
+    applyHomeState();   // from cache first (instant)
+    flushQueue();
+    refreshHistory(true); // then reconcile with server, re-apply state
+  }
+
+  function doLogout() {
+    clearAll();
+    showOverlay(false);
+    document.getElementById('in-study').value = '';
+    document.getElementById('in-part').value = '';
+    show('screen-login');
+  }
+
+  function boot() {
+    buildTzOptions();
+    document.getElementById('btn-start').addEventListener('click', doStart);
+    document.getElementById('btn-logout').addEventListener('click', doLogout);
+    document.getElementById('btn-sleep').addEventListener('click', onSleep);
+    document.getElementById('btn-wake').addEventListener('click', onWake);
+    document.getElementById('btn-history').addEventListener('click', function () { renderHistory(); showOverlay(false); show('screen-history'); });
+    document.getElementById('btn-back').addEventListener('click', function () { show('screen-home'); applyHomeState(); });
+
+    if (load(K_SESSION, null)) enterHome();
+    else show('screen-login');
+  }
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+</script>
