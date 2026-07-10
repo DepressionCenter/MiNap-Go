@@ -22,31 +22,6 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 <html>
 <head>
   <base target="_top">
-  <script>
-    // Anti-clickjacking guard: doGet() sets XFrameOptionsMode.ALLOWALL so this page can be
-    // embedded on the code.depressioncenter.org live-demo page, but that removes framing
-    // protection everywhere. Since Apps Script never exposes the Referer header server-side,
-    // the only real check has to happen here, client-side, before any UI paints.
-    (function () {
-      var ALLOWED_EMBED_ORIGIN = 'https://code.depressioncenter.org';
-      var isFramed = (window.top !== window.self);
-      if (!isFramed) return; // direct visit — always allowed, no check needed
-
-      var referrer = document.referrer || '';
-      var refererOk = (referrer.indexOf(ALLOWED_EMBED_ORIGIN + '/') === 0 || referrer === ALLOWED_EMBED_ORIGIN);
-      var embedFlagOk = /[?&]allowEmbed=true(&|$)/.test(window.location.search);
-
-      // Both signals are required. embedFlagOk alone proves nothing (anyone can copy the
-      // URL) — it only ever tightens the referrer check, never substitutes for it.
-      if (!refererOk || !embedFlagOk) {
-        document.documentElement.style.display = 'none';
-        try { window.top.location = window.location.href; } catch (e) {
-          // Blocked (e.g. sandboxed iframe without allow-top-navigation) — the hidden
-          // <html> above still prevents a clickjacking overlay from showing real UI.
-        }
-      }
-    })();
-  </script>
   <?!= include('Stylesheet'); ?>
 </head>
 <body>
