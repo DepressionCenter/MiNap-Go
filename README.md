@@ -27,7 +27,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 ## Description
 MiNap Go is a standalone, ready-to-run version of [MiNap](https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/KB/Article/10603/MiNap-Facilitating-Sleep-Medicine-Research-with-Smartwatch-Technology) with no additional technology required. A Google account is required to host the Apps Script web app and the Google Sheet it writes to.
 
-![MiNap Go Preview](/images/MiNap-Go-Preview.png)
+![MiNap Go Preview](/images/MiNap-Go-Preview.gif)
 
 MiNap Go is a browser-based sleep diary: participants tap Sleep and Wake, and each timestamped event is saved to a private, researcher-owned Google Sheet. It runs entirely as a single Google Apps Script web app, with no server, no database, and no code editing needed to deploy a new study.
 
