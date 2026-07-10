@@ -25,6 +25,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
   var K_HISTORY = 'minap.history';
   var K_QUEUE = 'minap.queue';
 
+  var MSG_INVALID_CREDENTIALS = 'Please contact the study to ensure the Study ID and Participant ID are correct.';
+  var MSG_LOGIN_FAILED = 'Unable to log in. Please verify the Study ID and Participant ID are correct.';
+  var MSG_LOGIN_UNREACHABLE = 'Unable to reach the study server right now. Check your connection and try again.';
+  var editWindowDays = 7; // fallback until server config loads (see loadConfig)
+
   // ----- storage helpers -----
   function load(key, fallback) {
     try { var v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
@@ -109,9 +114,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     };
   }
 
+  // onDone(ok, data): on success, data is the server's { invalid, row } envelope;
+  // on failure (request never completed), data is the original payload, for requeueing.
   function sendEvent(payload, onDone) {
     google.script.run
-      .withSuccessHandler(function (saved) { onDone(true, saved); })
+      .withSuccessHandler(function (res) { onDone(true, res); })
       .withFailureHandler(function () { onDone(false, payload); })
       .logEvent(payload);
   }
@@ -123,8 +130,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     var next = q.shift();
     save(K_QUEUE, q);
     sendEvent(next, function (ok, res) {
-      if (!ok) { var qq = load(K_QUEUE, []); qq.push(res); save(K_QUEUE, qq); }
-      else { flushQueue(); }
+      if (ok && res && res.invalid) {
+        toast(MSG_INVALID_CREDENTIALS); // will never succeed until re-validated; don't requeue
+        return;
+      }
+      if (!ok) {
+        var qq = load(K_QUEUE, []); qq.push(res); save(K_QUEUE, qq);
+      } else {
+        flushQueue();
+      }
     });
   }
 
@@ -133,7 +147,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     var hist = load(K_HISTORY, []);
     hist.unshift(ev);
     save(K_HISTORY, hist);
-    sendEvent(ev, function (ok) {
+    sendEvent(ev, function (ok, res) {
+      if (ok && res && res.invalid) {
+        toast(MSG_INVALID_CREDENTIALS);
+        return;
+      }
       if (!ok) {
         var q = load(K_QUEUE, []); q.push(ev); save(K_QUEUE, q);
       }
@@ -246,6 +264,26 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     return h + 'h ' + (m % 60) + 'm';
   }
 
+  // Editable if this specific event's own logged time is within the edit window.
+  function isEditable(ev) {
+    if (!ev) return false;
+    var ageDays = (Date.now() - Number(ev.event_epoch_ms)) / 86400000;
+    return ageDays <= editWindowDays;
+  }
+
+  function timeField(ev, label) {
+    var text = label + ' ' + fmtTime(ev);
+    if (!ev) return text;
+    var edited = ev.edited === 'TRUE' || ev.edited === true;
+    if (edited) text += '<sup>*</sup>';
+    var extra = '';
+    if (isEditable(ev)) {
+      extra = ' <button type="button" class="edit-time' + (edited ? ' edited' : '') + '" data-id="' + ev.record_id + '" ' +
+        'aria-label="Edit ' + label.toLowerCase() + ' time">&#9998;</button>';
+    }
+    return text + extra;
+  }
+
   function renderHistory() {
     var box = document.getElementById('history-list');
     var hist = load(K_HISTORY, []);
@@ -268,7 +306,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         '<div class="night">' +
           '<div>' +
             '<div class="date">' + fmtDate(anchor) + '</div>' +
-            '<div class="times">Sleep ' + fmtTime(n.sleep) + ' &middot; Wake ' + fmtTime(n.wake) + '</div>' +
+            '<div class="times">' + timeField(n.sleep, 'Sleep') + ' &middot; ' + timeField(n.wake, 'Wake') + '</div>' +
           '</div>' + pill +
         '</div>';
     }).join('');
@@ -278,23 +316,163 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     var session = load(K_SESSION, null);
     if (!session) return;
     google.script.run
-      .withSuccessHandler(function (rows) {
-        if (rows && rows.length) save(K_HISTORY, rows);
+      .withSuccessHandler(function (res) {
+        // The server has the final say on the allowlist: if this participant's ID was
+        // revoked, don't keep showing (possibly stale) history — log out immediately.
+        if (res && res.invalid) { forceLogout(MSG_INVALID_CREDENTIALS); return; }
+        var rows = (res && res.rows) || [];
+        if (rows.length) save(K_HISTORY, rows);
         if (thenApplyHome) applyHomeState();
         if (!document.getElementById('screen-history').classList.contains('hidden')) renderHistory();
       })
-      .withFailureHandler(function () {})
+      .withFailureHandler(function () {}) // request never completed (offline/etc.) - stay logged in, retry later
       .getHistory({ study_id: session.study_id, participant_id: session.participant_id });
   }
 
+  // ----- editing a previous entry's date/time -----
+  function findHistEvent(recordId) {
+    var hist = load(K_HISTORY, []);
+    for (var i = 0; i < hist.length; i++) {
+      if (hist[i].record_id === recordId) return hist[i];
+    }
+    return null;
+  }
+
+  // Format an instant as "YYYY-MM-DDTHH:mm" in the given IANA tz, for a datetime-local input.
+  function toDatetimeLocalValue(epochMs, tz) {
+    var dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+    });
+    var p = dtf.formatToParts(new Date(epochMs)).reduce(function (acc, x) { acc[x.type] = x.value; return acc; }, {});
+    return p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute;
+  }
+
+  // How far the wall clock in tz differs from UTC at this instant (ms), via Intl (no tz library).
+  function tzOffsetMs(date, tz) {
+    var dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, hourCycle: 'h23',
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit'
+    });
+    var p = dtf.formatToParts(date).reduce(function (acc, x) { acc[x.type] = x.value; return acc; }, {});
+    var asUtc = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute), Number(p.second));
+    return asUtc - date.getTime();
+  }
+
+  // Wall-clock date/time components as read in tz -> epoch ms. Two passes to settle across DST edges.
+  function epochFromWallTime(y, mo, d, h, mi, tz) {
+    var guess = Date.UTC(y, mo - 1, d, h, mi, 0);
+    var offset = tzOffsetMs(new Date(guess), tz);
+    var epoch = guess - offset;
+    offset = tzOffsetMs(new Date(epoch), tz);
+    return guess - offset;
+  }
+
+  var editingRecordId = null;
+
+  function openEditor(recordId) {
+    var ev = findHistEvent(recordId);
+    if (!ev || !isEditable(ev)) return;
+    editingRecordId = recordId;
+    document.getElementById('edit-modal-title').textContent =
+      'Edit ' + (ev.event_type === 'SLEEP' ? 'sleep' : 'wake') + ' time';
+    document.getElementById('edit-datetime').value = toDatetimeLocalValue(ev.event_epoch_ms, ev.event_tz);
+    document.getElementById('edit-modal').classList.remove('hidden');
+  }
+
+  function closeEditor() {
+    editingRecordId = null;
+    document.getElementById('edit-modal').classList.add('hidden');
+  }
+
+  function applyServerUpdate(saved) {
+    if (!saved) return;
+    var hist = load(K_HISTORY, []);
+    for (var i = 0; i < hist.length; i++) {
+      if (hist[i].record_id === saved.record_id) { hist[i] = saved; break; }
+    }
+    save(K_HISTORY, hist);
+  }
+
+  function saveEditor() {
+    var ev = findHistEvent(editingRecordId);
+    var session = load(K_SESSION, null);
+    if (!ev || !session) { closeEditor(); return; }
+
+    var val = document.getElementById('edit-datetime').value; // "YYYY-MM-DDTHH:mm"
+    var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(val || '');
+    if (!m) { toast('Enter a valid date and time'); return; }
+
+    var epoch = epochFromWallTime(Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5]), ev.event_tz);
+    var d = new Date(epoch);
+    var updated = {
+      record_id: ev.record_id,
+      study_id: session.study_id,
+      participant_id: session.participant_id,
+      event_epoch_ms: epoch,
+      event_iso_utc: d.toISOString(),
+      event_tz: ev.event_tz,
+      event_local: d.toLocaleString('en-US', { timeZone: ev.event_tz, hour12: true })
+    };
+
+    // Show the edit immediately (same optimistic-first pattern as logging a new event);
+    // the server round-trip below reconciles with the authoritative row afterward.
+    applyServerUpdate(Object.assign({}, ev, updated, { edited: 'TRUE' }));
+    closeEditor();
+    renderHistory();
+
+    var btn = document.getElementById('btn-edit-save');
+    btn.disabled = true;
+    google.script.run
+      .withSuccessHandler(function (res) {
+        btn.disabled = false;
+        if (res && res.invalid) { toast(MSG_INVALID_CREDENTIALS); return; }
+        applyServerUpdate(res && res.row);
+        renderHistory();
+        toast('Time updated');
+      })
+      .withFailureHandler(function () {
+        btn.disabled = false;
+        toast('Could not save. Try again.');
+      })
+      .updateEvent(updated);
+  }
+
+  // ----- config -----
+  function loadConfig() {
+    google.script.run
+      .withSuccessHandler(function (cfg) { if (cfg && cfg.editWindowDays) editWindowDays = cfg.editWindowDays; })
+      .withFailureHandler(function () {})
+      .getConfig();
+  }
+
   // ----- auth / boot -----
+  function setLoginBusy(busy) {
+    document.getElementById('btn-start').disabled = busy;
+    document.getElementById('btn-start-label').classList.toggle('hidden', busy);
+    document.getElementById('btn-start-spinner').classList.toggle('hidden', !busy);
+  }
+
   function doStart() {
-    var study = document.getElementById('in-study').value.trim();
-    var part = document.getElementById('in-part').value.trim();
+    var study = document.getElementById('in-study').value.trim().toUpperCase();
+    var part = document.getElementById('in-part').value.trim().toUpperCase();
     var tz = document.getElementById('in-tz').value;
     if (!study || !part) { toast('Enter Study ID and Participant ID'); return; }
-    save(K_SESSION, { study_id: study, participant_id: part, tz: tz, created_at: new Date().toISOString() });
-    enterHome();
+
+    setLoginBusy(true);
+    google.script.run
+      .withSuccessHandler(function (res) {
+        setLoginBusy(false);
+        if (!res || !res.valid) { toast(MSG_LOGIN_FAILED); return; }
+        save(K_SESSION, { study_id: study, participant_id: part, tz: tz, created_at: new Date().toISOString() });
+        enterHome();
+      })
+      .withFailureHandler(function () {
+        setLoginBusy(false);
+        toast(MSG_LOGIN_UNREACHABLE);
+      })
+      .validateLogin(study, part);
   }
 
   function enterHome() {
@@ -307,22 +485,42 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     refreshHistory(true); // then reconcile with server, re-apply state
   }
 
-  function doLogout() {
+  // Clears the local session and returns to login. `message`, if given, is toasted
+  // (used when the server rejects a revoked Study/Participant ID); the manual
+  // "Log out" link calls this with no message.
+  function forceLogout(message) {
     clearAll();
     showOverlay(false);
     document.getElementById('in-study').value = '';
     document.getElementById('in-part').value = '';
     show('screen-login');
+    if (message) toast(message);
+  }
+
+  function doLogout() {
+    forceLogout();
   }
 
   function boot() {
     buildTzOptions();
+    loadConfig();
     document.getElementById('btn-start').addEventListener('click', doStart);
     document.getElementById('btn-logout').addEventListener('click', doLogout);
     document.getElementById('btn-sleep').addEventListener('click', onSleep);
     document.getElementById('btn-wake').addEventListener('click', onWake);
-    document.getElementById('btn-history').addEventListener('click', function () { renderHistory(); showOverlay(false); show('screen-history'); });
+    document.getElementById('btn-history').addEventListener('click', function () {
+      renderHistory();
+      showOverlay(false);
+      show('screen-history');
+      refreshHistory(false); // reconcile with server; also catches a revoked ID
+    });
     document.getElementById('btn-back').addEventListener('click', function () { show('screen-home'); applyHomeState(); });
+    document.getElementById('history-list').addEventListener('click', function (e) {
+      var btn = e.target.closest('.edit-time');
+      if (btn) openEditor(btn.getAttribute('data-id'));
+    });
+    document.getElementById('btn-edit-cancel').addEventListener('click', closeEditor);
+    document.getElementById('btn-edit-save').addEventListener('click', saveEditor);
 
     if (load(K_SESSION, null)) enterHome();
     else show('screen-login');

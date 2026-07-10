@@ -36,8 +36,9 @@ MiNap Go is a browser-based sleep diary: participants tap Sleep and Wake, and ea
 2. Open the [MiNap Go template sheet](https://docs.google.com/spreadsheets/d/1oygo0kEPhFN6bKEcw8wE7RhUb_JM3K7jTiy6z6Hv8rg) and click **File > Make a copy** to copy it to your own Google Drive. Rename the copy to your study name or study ID.
 3. In your copy, click **Extensions > Apps Script > Deploy > New deployment > Web app**. Set "Execute as" to **Me** and "Who has access" to **Anyone**. Click **Deploy** and authorize the script when prompted.
 4. The first authorization shows a Google "unverified app" screen: click **Advanced**, then "**Go to MiNap Go (unsafe)**". This is expected -- it is your own copy of the script.
-5. Once deployed, you will be given the URL for your new web app. Open that URL once. A **Setup** tab appears in the Sheet with the URL to share with participants. Also copy that URL somewhere safe as a backup.
-6. Share the URL with participants. To start another study, make another copy of the template Sheet and repeat these steps.
+5. Once deployed, you will be given the URL for your new web app. Open that URL once. A **Setup** tab appears in the Sheet with three columns: the web app URL, your Active Study ID, and your Active Participant IDs. Also copy that URL somewhere safe as a backup.
+6. In the **Setup** tab, replace the default Active Study ID (`STUDY1`) with your actual study ID, and replace the sample Active Participant IDs (`P01`, `P02`, `P03`) with your real participant IDs, one per row — only IDs listed there will be able to log in. Give each participant their Study ID and their own Participant ID during enrollment.
+7. Share the URL with participants. To start another study, make another copy of the template Sheet and repeat these steps.
 
 
 

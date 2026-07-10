@@ -37,12 +37,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 
       <label class="field">
         <span>Study ID</span>
-        <input id="in-study" type="text" inputmode="text" autocomplete="off" placeholder="e.g. SLEEP-01">
+        <input id="in-study" type="text" inputmode="text" autocomplete="off" placeholder="e.g. STUDY1">
       </label>
 
       <label class="field">
         <span>Participant ID</span>
-        <input id="in-part" type="text" inputmode="text" autocomplete="off" placeholder="e.g. P0142">
+        <input id="in-part" type="text" inputmode="text" autocomplete="off" placeholder="e.g. P01">
       </label>
 
       <label class="field">
@@ -50,8 +50,11 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         <select id="in-tz"></select>
       </label>
 
-      <button id="btn-start" class="btn btn-primary">Start</button>
-      <p class="note">Demo only. Use opaque IDs, no personal info.</p>
+      <button id="btn-start" class="btn btn-primary" type="button">
+        <span id="btn-start-label">Start</span>
+        <span id="btn-start-spinner" class="spinner hidden" aria-hidden="true"></span>
+      </button>
+      <p class="note">Enter the study and participant IDs provided during study enrollment.</p>
     </section>
 
     <!-- HOME (awake): only the Sleep action -->
@@ -75,7 +78,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     <!-- HISTORY -->
     <section id="screen-history" class="screen hidden">
       <header class="home-head">
-        <h2>Your sleep</h2>
+        <h2>Sleep history</h2>
         <button id="btn-back" class="link">Back</button>
       </header>
       <div id="history-list" class="history"></div>
@@ -96,6 +99,21 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         <span class="big-glyph">&#9728;&#65039;</span>
         <span class="big-label">Wake up</span>
       </button>
+    </div>
+  </div>
+
+  <!-- EDIT TIME modal: adjust a sleep/wake entry's date & time, within the edit window -->
+  <div id="edit-modal" class="modal hidden" role="dialog" aria-label="Edit time">
+    <div class="modal-card">
+      <h3 id="edit-modal-title">Edit time</h3>
+      <label class="field">
+        <span>Date &amp; time</span>
+        <input id="edit-datetime" type="datetime-local">
+      </label>
+      <div class="modal-actions">
+        <button id="btn-edit-cancel" class="link" type="button">Cancel</button>
+        <button id="btn-edit-save" class="btn btn-primary" type="button">Save</button>
+      </div>
     </div>
   </div>
 
