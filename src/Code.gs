@@ -36,12 +36,23 @@ const SETUP_DATA_ROW = 2; // first row below the header
 const DEFAULT_STUDY_ID = 'STUDY1';
 const DEFAULT_PARTICIPANT_IDS = ['P01', 'P02', 'P03'];
 
-function doGet() {
+function doGet(e) {
   recordWebAppUrl_(); // save the shareable link into the Sheet on first open
-  return HtmlService.createTemplateFromFile('Index')
+  var output = HtmlService.createTemplateFromFile('Index')
     .evaluate()
     .setTitle('MiNap Go')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1');
+
+  // Only relax framing protection when the request opts in. This flag isn't a secret (it's
+  // public in source control) so it's not a real barrier against a targeted attacker -- the
+  // client-side referrer check in Index.html is what actually restricts embedding to the
+  // approved demo page. This just keeps the bare URL from being framable by default.
+  var allowEmbed = e && e.parameter && e.parameter.allowEmbed === 'true';
+  if (allowEmbed) {
+    output.setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+
+  return output;
 }
 
 // Write the live web app URL into the Setup tab so the researcher never loses it.
