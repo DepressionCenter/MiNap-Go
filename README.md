@@ -27,13 +27,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 ## Description
 MiNap Go is a standalone, ready-to-run version of [MiNap](https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/KB/Article/10603/MiNap-Facilitating-Sleep-Medicine-Research-with-Smartwatch-Technology) with no additional technology required. A Google account is required to host the Apps Script web app and the Google Sheet it writes to.
 
-![MiNap Go Preview](/images/MiNap-Go-Preview.gif)
+[![MiNap Go Preview](/images/MiNap-Go-Preview.gif)](https://code.depressioncenter.org/MiNap-Go)
 
 MiNap Go is a browser-based sleep diary: participants tap Sleep and Wake, and each timestamped event is saved to a private, researcher-owned Google Sheet. It runs entirely as a single Google Apps Script web app, with no server, no database, and no code editing needed to deploy a new study.
 
 
 
 ## Quick Start Guide
+Want to try it first? Check out the [live demo](https://code.depressioncenter.org/MiNap-Go) before deploying your own copy.
+
 1. A Google account is required. Each study gets its own copy of MiNap Go, and data lives in the researcher's own Google Drive.
 2. Open the [MiNap Go template sheet](https://docs.google.com/spreadsheets/d/1oygo0kEPhFN6bKEcw8wE7RhUb_JM3K7jTiy6z6Hv8rg) and click **File > Make a copy** to copy it to your own Google Drive. Rename the copy to your study name or study ID.
 3. In your copy, click **Extensions > Apps Script > Deploy > New deployment > Web app**. Set "Execute as" to **Me** and "Who has access" to **Anyone**. Click **Deploy** and authorize the script when prompted.
@@ -53,9 +55,9 @@ You can also deploy the app manually into a blank project if you want to rebuild
 
 1. Create a new Google Sheet. This becomes your data store.
 2. Open the sheet and click**Extensions > Apps Script** to open the bound script project.
-3. Replace the default `Code.gs` contents with this repo's `Code.gs`.
-4. **File > New > HTML file**, three times; name them exactly `Index`, `Stylesheet`, and `JavaScript`, and paste in the matching repo files.
-5. Open Project Settings (gear icon) and enable "Show `appsscript.json` manifest file in editor"; open `appsscript.json`, delete its contents, and paste in this repo's appscript.json.
+3. Replace the default `Code.gs` contents with this repo's [`src/Code.gs`](src/Code.gs).
+4. **File > New > HTML file**, three times; name them exactly `Index`, `Stylesheet`, and `JavaScript`, and paste in the matching files from the repo's [`src`](src/) folder.
+5. Open Project Settings (gear icon) and enable "Show `appsscript.json` manifest file in editor"; open `appsscript.json`, delete its contents, and paste in this repo's [`src/appsscript.json`](src/appsscript.json).
 6. Click **Deploy > New deployment > Web app**. Set "Execute as" to "Me" to ensure it runs under your account. Set "Who has access" to "Anyone" so particants can access it without a Google account. Authorize the script (as described in the quick start guide).
 7. Open the web app URL once; the shareable URL is written to the **Setup** tab.
 

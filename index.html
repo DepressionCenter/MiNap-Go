@@ -1,0 +1,189 @@
+<!--
+This file is part of MiNap Go
+index.html
+Author(s): Gabriel Mongefranco
+Created: 2026-07-10
+Summary: Static GitHub Pages landing page embedding the live MiNap Go web app and its published data sheet side by side.
+Notes: This is a plain static page (not an Apps Script template) served via GitHub Pages. See README file for documentation and full license information.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MiNap Go: Live Demo</title>
+<style>
+  :root {
+    --indigo: #4c4b8a;
+    --indigo-deep: #2e2c5c;
+    --violet: #7b6bd6;
+    --amber: #f6b656;
+    --amber-deep: #e89a2c;
+    --ink: #2b2a44;
+    --muted: #8a89a6;
+    --card: #ffffff;
+    --line: #ece9f7;
+    --radius: 22px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    background: linear-gradient(160deg, #2e2c5c 0%, #4c4b8a 45%, #b9a7e8 100%);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 28px 20px 90px;
+  }
+
+  header.hero {
+    width: 100%;
+    max-width: 1200px;
+    text-align: center;
+    color: #fff;
+    margin-bottom: 22px;
+  }
+  .brand-glyph { font-size: 40px; line-height: 1; }
+  header.hero h1 { margin: 8px 0 6px; font-size: 30px; letter-spacing: 0.5px; }
+  header.hero p.tagline { margin: 0 0 16px; color: #d9d5f4; font-size: 15px; }
+
+  .btn-github {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 700;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1.5px solid rgba(255, 255, 255, 0.4);
+    padding: 9px 18px;
+    border-radius: 999px;
+    text-decoration: none;
+    transition: all 0.2s;
+  }
+  .btn-github:hover, .btn-github:focus {
+    background: var(--amber);
+    color: var(--ink);
+    border-color: var(--amber);
+  }
+
+  .frames {
+    width: 100%;
+    max-width: 1200px;
+    display: flex;
+    align-items: stretch;
+    gap: 20px;
+  }
+
+  .panel {
+    background: var(--card);
+    border-radius: var(--radius);
+    box-shadow: 0 24px 60px rgba(20, 18, 50, 0.35);
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .panel-app {
+    flex: 0 0 460px;
+    max-width: 460px;
+  }
+  .panel-sheet {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .panel h2 {
+    margin: 2px 8px 12px;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--indigo);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+
+  .panel iframe {
+    width: 100%;
+    flex: 1 1 auto;
+    border: 1.5px solid var(--line);
+    border-radius: 14px;
+    background: #fbfaff;
+  }
+  .panel-app iframe { height: 780px; }
+  .panel-sheet iframe { height: 780px; }
+
+  @media (max-width: 900px) {
+    .frames { flex-direction: column; }
+    .panel-app { flex: 1 1 auto; max-width: none; }
+    .panel-app iframe, .panel-sheet iframe { height: 620px; }
+  }
+
+  .site-footer {
+    margin-top: 26px;
+    text-align: center;
+    font-size: 12px;
+    color: rgba(255, 255, 255, 0.75);
+    padding: 0 16px;
+  }
+  .site-footer a {
+    color: inherit;
+    text-decoration: underline;
+  }
+</style>
+</head>
+<body>
+
+  <header class="hero">
+    <div class="brand-glyph">&#127769;</div>
+    <h1>MiNap Go: Live Demo</h1>
+    <p class="tagline">Try the participant web app and see entries land in the study spreadsheet in real time.</p>
+    <a class="btn-github" href="https://github.com/DepressionCenter/MiNap-Go" target="_blank" rel="noopener">
+      View on GitHub
+    </a>
+  </header>
+
+  <div class="frames">
+    <section class="panel panel-app">
+      <h2>Web App</h2>
+      <iframe
+        src="https://script.google.com/a/umich.edu/macros/s/AKfycbxyKLoDUniLsfuBx25MQhw-ibAyuJdCGeRgjck-8OtHSZKR3rBOylmcB4SfJOv4vH8/exec"
+        title="MiNap Go web app"
+        loading="lazy"></iframe>
+    </section>
+
+    <section class="panel panel-sheet">
+      <h2>Data Sheet</h2>
+      <iframe
+        src="https://docs.google.com/spreadsheets/d/e/2PACX-1vRCMKfSvRSZehr6nVc7-j-aXJhqL5izbJcSu-hkymZg70ynAO8anXlAzwTvK73RgqW9A7s21jU_khCv/pubhtml?gid=227063880&amp;single=true&amp;widget=true&amp;headers=false"
+        title="MiNap Go demo spreadsheet"
+        loading="lazy"></iframe>
+    </section>
+  </div>
+
+  <footer class="site-footer">
+    &copy; 2026 The Regents of the University of Michigan &nbsp;|&nbsp; <a href="https://depressioncenter.org" target="_blank" rel="noopener">Eisenberg Family Depression Center</a>
+  </footer>
+
+</body>
+</html>
