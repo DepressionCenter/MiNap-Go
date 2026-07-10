@@ -17,11 +17,6 @@
 // You should have received a copy of the GNU General Public License along
 // with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// Easiest setup: keep this script bound to its Google Sheet (Extensions > Apps
-// Script from inside the Sheet). No ID or code editing needed. The data tab and
-// headers are created automatically on first use. Deploy as Web App
-// (Execute as: Me, Who has access: Anyone).
-
 const SHEET_NAME = 'SleepDiary';
 const SETUP_SHEET = 'Setup';
 const APP_VERSION = '1.0.0';

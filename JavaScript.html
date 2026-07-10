@@ -20,7 +20,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 -->
 <script>
   var APP_VERSION = '1.0.0';
-  var AUTO_WAKE_HOURS = 12;
+  var AUTO_WAKE_HOURS = 12; // auto-wake if asleep for more than this many hours
   var K_SESSION = 'minap.session';
   var K_HISTORY = 'minap.history';
   var K_QUEUE = 'minap.queue';
@@ -141,7 +141,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
   }
 
   // ----- sleep state machine -----
-  // Sleeping iff the most recent event is a SLEEP with no WAKE after it.
+  // Sleeping if the most recent event is a SLEEP with no WAKE after it.
   function computeState() {
     var hist = load(K_HISTORY, []);
     if (!hist.length) return 'AWAKE';
@@ -199,7 +199,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 
   function renderStatus() {
     var chip = document.getElementById('status-chip');
-    chip.textContent = computeState() === 'SLEEPING' ? 'Sleeping' : 'Ready';
+    chip.textContent = computeState() === 'SLEEPING' ? 'Are you ready to wake up?' : 'Are you going to sleep?';
   }
 
   function onSleep() {
