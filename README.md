@@ -65,12 +65,6 @@ You can also deploy the app manually into a blank project if you want to rebuild
 Because the script is created from inside the Sheet, it is bound to that Sheet. All data will be written there, so it is important not to share it with anyone outside your study team or technical support.
 
 
-### Code maintenance notes
-+ This repository is the source of truth for the code. There is no build step or clasp project; the maintainer syncs these files into the template's bound Apps Script project by hand.
-+ **Once deployed, the script is independent of this repository.** Changes to the code here will not affect any deployed copies of MiNap Go. To update a deployed copy, you must manually copy the new code into the bound Apps Script project and redeploy it. This ensures that each study's data remains private and secure, and that the researcher has full control over when and how to update their deployed copy of MiNap Go.
-
-
-
 
 ## Additional Resources
 + [MiNap: Facilitating Sleep Medicine Research with Smartwatch Technology](https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/KB/Article/10603/MiNap-Facilitating-Sleep-Medicine-Research-with-Smartwatch-Technology) - Article describing the original MiNap smartwatch sleep diary, with full documentation for the smartwatch, iPhone, and server-side components.

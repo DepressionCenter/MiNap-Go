@@ -88,6 +88,19 @@ MiNap Go is a standalone, ready-to-run browser-based sleep diary for research st
 - Open web app URL once first
 - Check Sheet is not read-only
 
+
+## Contributing
+All contributions are welcome! If you would like to contribute code or documentation to MiNap Go, please follow these steps:
+- Fork the repository, make changes, test them locally, and submit pull requests.
+- If using an AI coding assistant, tell it to read `AGENTS.md` first. Please ensure that the code is reviewed and tested before submission.
+
+We also welcome your feedback and suggestions for improving MiNap Go. Please [submit issues or feature requests](https://github.com/DepressionCenter/MiNap-Go/issues) on the GitHub repository.
+
+
+### Code maintenance notes
++ This repository is the source of truth for the code. There is no build step or clasp project; the maintainer syncs these files into the template's bound Apps Script project by hand.
++ **Once deployed, the script is independent of this repository.** Changes to the code here will not affect any deployed copies of MiNap Go. To update a deployed copy, you must manually copy the new code into the bound Apps Script project and redeploy it. This ensures that each study's data remains private and secure, and that the researcher has full control over when and how to update their deployed copy of MiNap Go.
+
 ## Contact
 
 Mobile Technologies Core: efdc-mobiletech@umich.edu
