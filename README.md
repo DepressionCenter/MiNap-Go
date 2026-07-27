@@ -47,6 +47,7 @@ Want to try it first? Check out the [live demo](https://code.depressioncenter.or
 
 
 ## Documentation
++ Overview of MiNap Go's architecture and design is available in the [MiNap Go Technical Overview](./docs/Overview.md).
 + The full documentation is available at: https://michmed.org/efdc-kb
 
 
@@ -93,10 +94,12 @@ If you need assistance identifying a contact person, email the EFDC's Mobile Tec
 
 
 ## Credits
-#### Contributors:
+#### Authors:
 + [Eisenberg Family Depression Center](https://depressioncenter.org) [(@DepressionCenter)](https://github.com/DepressionCenter)
 + [Gabriel Mongefranco](https://gabriel.mongefranco.com) [(@gabrielmongefranco)](https://github.com/gabrielmongefranco)
 
+#### Contributors:
++ Abhiram V. [(@abhiramvsmg)](https://github.com/abhiramvsmg)
 
 
 #### This work is based in part on the following projects, libraries and/or studies:
