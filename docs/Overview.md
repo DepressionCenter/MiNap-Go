@@ -1,0 +1,99 @@
+<!--
+This file is part of MiNap Go.
+README.md
+Author(s): Gabriel Mongefranco (@gabrielmongefranco), Abhiram V. (@abhiramvsmg)
+Created: 2026-06-25
+Last Modified: 2026-07-27
+Summary: MiNap Go: a standalone, ready-to-run version of MiNap (sleep diary app for research) with no additional technology required. This file provides an overview of the project, in Markdown format.
+Notes: See README file for documentation and full license information.
+
+Copyright © 2026 The Regents of the University of Michigan
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+You should have received a copy of the GNU General Public License along
+with this program. If not, see <https://www.gnu.org/licenses/>.
+
+-->
+![Eisenberg Family Depression Center](https://github.com/DepressionCenter/.github/blob/main/images/EFDCLogo_375w.png "depressioncenter.org")
+
+# MiNap Go: Documentation and Quick Start Guide
+
+## Overview
+
+MiNap Go is a standalone, ready-to-run browser-based sleep diary for research studies. Participants tap Sleep or Wake, and each timestamped event is saved to a researcher-owned Google Sheet.
+
+### Key Features
+
+- No technology required to deploy - Runs as a Google Apps Script web app
+- Privacy-first - Data lives in the researcher's own Google Drive
+- Simple interface - Just two buttons: Sleep and Wake
+- Timestamped events - Each tap records exact time
+- Access control - Only enrolled participants with valid IDs can log data
+
+## Architecture
+
+### System Flow
+
+1. Participant opens web app URL and enters Study ID and Participant ID
+2. App validates ID against Setup tab in Google Sheet
+3. Participant taps Sleep or Wake button
+4. Apps Script records timestamp to Google Sheet
+5. Researcher reviews data in the Sheet
+
+### Security
+
+- Runs as the deploying researcher
+- Data is stored in the researcher's own Google Drive
+- Each study has its own Google Sheet
+- Participant IDs must be pre-approved in Setup tab
+- Participants can write data but cannot read or modify the Sheet directly. Sleep diary history that is vieweable by participants comes from the web app itself (browser cache), not the Sheet. That means if the participants clear their browser cache, log off from the app, or switch devices, they will lose access to their sleep diary history. The researcher can still view all data in the Sheet.
+
+## Quick Start Guide
+
+### Prerequisites
+- A Google account
+
+### Steps
+
+1. Try the live demo: https://code.depressioncenter.org/MiNap-Go
+2. Copy the template sheet: https://docs.google.com/spreadsheets/d/1oygo0kEPhFN6bKEcw8wE7RhUb_JM3K7jTiy6z6Hv8rg/copy
+3. Go to Extensions > Apps Script > Deploy > New deployment > Web app
+4. Set: Execute as = Me, Who has access = Anyone
+5. Click Deploy and authorize (click Advanced > Go to MiNap Go if warned)
+6. Open the web app URL once - Setup tab appears
+7. Replace default Study ID and Participant IDs with yours. Only participant IDs listed in the Setup tab will be able to log in. Participant IDs should be randomized (not sequential) and not personally identifiable.
+8. Share URL with participants
+
+## Troubleshooting
+
+### "Invalid Participant ID"
+- Verify ID is in Setup tab list
+- Check for typos (case-sensitive)
+
+### Data Not Appearing
+- Open web app URL once first
+- Check Sheet is not read-only
+
+### "Invalid Participant ID"
+- Verify ID is in Setup tab list
+- Check for typos (case-sensitive)
+
+### Data Not Appearing
+- Open web app URL once first
+- Check Sheet is not read-only
+
+## Contact
+
+Mobile Technologies Core: efdc-mobiletech@umich.edu
+
+[⬅ Back to README](https://github.com/DepressionCenter/MiNap-Go/)
+
+---
+
+Copyright © 2026 The Regents of the University of Michigan
