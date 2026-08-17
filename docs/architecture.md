@@ -269,6 +269,32 @@ Sliders are easy to get wrong. Four rules:
 
 Touch targets stay at least 44 by 44 pixels, per section 9.
 
+### 3.4.4 The standalone build: the person chooses
+
+Everything above describes the study build, where the researcher fixes the
+question set because a study needs every participant answering the same things.
+
+The standalone build has no researcher, so the person decides.
+
+- **Turn questions on and off.** The same Consensus Sleep Diary questions ship as
+  the default set, but any of them can be hidden. Someone tracking only bedtime
+  and sleep quality should not have to skip six questions every morning.
+- **Change the selection at any time.** Turning a question off does not delete the
+  answers already given; the charts simply stop after the last one. Turning it
+  back on resumes.
+- **Add up to five questions of their own.** Each is either a yes-or-no toggle or
+  a 1-to-10 slider. They get IDs `EMA_16` through `EMA_20`, taken from the spare
+  range, so a person's own questions never collide with the standard set and an
+  exported file has the same shape in both builds.
+
+The wording of a personal question is stored on the device and nowhere else. It
+travels in an export or a backup, and it is embedded in a shared report so the
+clinician reads the actual question rather than `EMA_17`. It is never sent to a
+server, because in this build there is no server.
+
+Nothing here exists in the study build. A study participant cannot hide a
+required question or invent a new one.
+
 ### 3.5 SleepDiary
 
 One row per marker.
@@ -489,6 +515,26 @@ clinician, and this is guaranteed by structure rather than by rule:
   no cell a researcher could clear. A login PIN reset cannot touch them.
 - Turning notes on requires setting a notes PIN. It can be changed but not
   removed, because no removal path exists.
+
+### 6.1 How the notes are encrypted
+
+Built on the browser's own cryptography, in both builds, with no library.
+
+- A random 256-bit key encrypts the notes, using AES-GCM.
+- The notes PIN is stretched into a wrapping key with PBKDF2, a random salt, and
+  310,000 iterations. That wrapping key encrypts the notes key.
+- The device stores the salt, the iteration count, the wrapped key, and a short
+  value used to check whether a PIN is right. **The PIN itself is never stored.**
+- Changing the PIN unwraps the notes key with the old one and wraps it with the
+  new one. The notes are not re-encrypted, so the change is instant however many
+  notes there are.
+
+This is why a backup can restore notes on a new phone: the file carries the
+ciphertext and the wrapping material, and the PIN opens it there just as it did
+on the old device.
+
+Unlike the login PIN in the study build, these iteration counts run in the
+browser, where 310,000 is fast enough to be unnoticeable.
 
 Sleep times and survey answers never go in the notes store, even though it would
 make them survive a PIN reset. Those are study data the participant agreed to
@@ -842,7 +888,105 @@ the browser stops deleting the history.
 
 ---
 
-## 14. Privacy and compliance
+## 14. Working offline, and getting updates
+
+### 14.1 The entry queue
+
+Both builds write to the device first and show the entry immediately. Sending it
+onward is a second step that is allowed to fail.
+
+In the study build, a submission that does not reach the Sheet goes into a queue
+and is retried when the app is next open and online. The queue drains one item at
+a time; a failure stops the drain until the next attempt, so a server problem
+cannot turn into a flood of retries.
+
+One case never retries: a submission rejected because the Study ID or Participant
+ID is no longer allowed. That will never succeed, so it is dropped from the queue
+and the participant is told to contact the study team.
+
+The limit is worth stating plainly, because it shapes what you tell participants.
+The study build has no service worker, so the queue only works **while the app is
+open**. Closing the app with no signal means the entry waits on the device until
+the app is opened again. The standalone build has no queue at all, because there
+is nowhere to send anything.
+
+### 14.2 Updating the standalone app
+
+The service worker keeps the app's code in a cache with a version number in its
+name. Code and data live in separate places, so updating one never touches the
+other.
+
+When a new version appears: the app notices, shows a message offering to update,
+and reloads once the person accepts. Old code caches are deleted; nothing else
+is.
+
+Three rules that must never be broken, because breaking them destroys data:
+
+- Never rename a storage key without a migration that moves the old data.
+- Never delete anything except old code caches.
+- Never assume an update ran. A person can stay on an old version for months, so
+  every version must read data written by every earlier one.
+
+The study build has no service worker and therefore no update mechanism.
+Researchers update by pasting new code into their own project and redeploying,
+which they choose to do; running studies are never changed underneath them.
+
+---
+
+## 15. How each person uses it
+
+**Researcher.** Copy the template Sheet. Fill in the Setup tab and the
+participant list. Deploy the web app and open it once so the URL is recorded.
+Share the URL and each person's Study ID and Participant ID at enrollment, and
+have them set their PIN while you are there. Watch the data arrive in the Sheet
+and the charts on the Dashboard tab. The file linking Participant IDs to real
+people is kept in an approved system, never in Google.
+
+**Study participant.** Open the URL, enter the two IDs, choose a PIN. After that,
+tap when going to sleep and when waking, and fill in the short diary each
+morning. Export a backup when the app asks. Nothing to install, no Google
+account.
+
+**Clinician.** Point patients at the public app. There is nothing to operate, no
+deployment, no keys, and no patient data in your custody. Patients send you a
+report when they choose to; record what matters in the medical record as usual. A
+clinician who instead deploys their own copy takes on data custody, which is a
+different decision — see section 17.
+
+**Person tracking their own sleep.** Open the public app and install it when
+asked. Pick which questions to answer. Tap sleep and wake, fill in the morning
+diary, optionally keep private notes behind their own PIN. Share a report by link,
+code, or PDF whenever you want to. Export a backup every so often.
+
+---
+
+## 16. Building and releasing
+
+One repository, one core, two outputs.
+
+| Part | Holds |
+|---|---|
+| `src/` | Everything the app does: screens, diary, questions, storage, charts, export and import, notes, sharing |
+| `gas/` | The Apps Script wrapper, `Code.gs`, and the generated single-page bundle |
+| `app/` | The standalone wrapper, service worker, and app manifest |
+| `build.js` | Produces both outputs from `src/` |
+
+The build is what keeps the two apps honest. It inlines the core into one file for
+Apps Script and copies it, plus the service worker and manifest, into the
+standalone folder. The code that sends data to a server is only included in the
+Apps Script output, and the code for sharing, PDFs, and installation is only
+included in the standalone output. Neither is present-but-disabled in the other.
+A reviewer can confirm this by searching the built files, which is a much stronger
+statement than a setting.
+
+Releasing means running the build, then pasting the Apps Script output into the
+template Sheet's project and pushing the standalone output to the site. There is
+no automated deployment, deliberately: every study is a separate copy under
+someone else's account, and nothing should be able to change them all at once.
+
+---
+
+## 17. Privacy and compliance
 
 Timestamps are stored exactly as they happen. Dates are not shifted. Shifting
 would break the dashboards, which are the reason a researcher can use this tool
@@ -874,7 +1018,36 @@ a reviewer to weigh.
 
 ---
 
-## 15. Still to decide
+## 18. Deliberately not in version 1
+
+Recorded here so they are not rediscovered as new ideas later.
+
+**Cloud backup.** Google Drive or OneDrive, standalone build only. Drive is
+workable from the browser with a narrow file-scoped permission and no secret;
+Dropbox is workable the same way. File export covers the need for now.
+
+**Device integrations.** Fitbit is the only major wearable that could work from a
+browser, because its interface allows it and its sign-in flow does not need a
+secret. Garmin requires an approved-partner arrangement and pushes data to a
+server, and Whoop appears to need a secret that cannot exist in a browser. Those
+users enter their diary by hand. Any integration would be standalone-build only,
+because sign-in has to be registered against a fixed web address and a
+researcher's own deployment does not have one. Before investing here, check
+whether the Fitbit interface is still supported; its documentation has pointed at
+a move to Google's health interfaces.
+
+**Naps.** The published diary has an expanded version that asks about naps,
+alcohol, caffeine, and medication. Version 1 ships the Core version only. Adding
+naps means more than a question: a nap is a second sleep episode in a day, and the
+sleep-day rule and the charts both assume one. See section 19.
+
+**Pulling history back from the Sheet.** Ruled out. See section 7.
+
+**A native phone app.** The plan is to prove the idea works first.
+
+---
+
+## 19. Still to decide
 
 - Permission to redistribute the Consensus Sleep Diary wording inside a
   GPL-licensed tool. It is distributed freely by its authors and widely used, but
@@ -928,3 +1101,6 @@ cannot be updated later.
 - [Web Content Accessibility Guidelines 2.2](https://www.w3.org/TR/WCAG22/)
 
 [⬅ Back to README](../README.md)
+
+----
+Copyright © 2026 The Regents of the University of Michigan
