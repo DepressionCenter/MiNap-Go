@@ -2,6 +2,7 @@
 // Code.gs
 // Author(s): Gabriel Mongefranco
 // Created: 2026-07-09
+// Last Modified: 2026-08-18
 // Summary: Server-side Apps Script; serves the web app and reads/writes sleep events to the bound Google Sheet.
 // Notes: See README file for documentation and full license information.
 //
@@ -131,7 +132,7 @@ function getConfig() {
   return { editWindowDays: EDIT_WINDOW_DAYS, appVersion: APP_VERSION };
 }
 
-function include(filename) {
+function include_(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
@@ -196,28 +197,6 @@ function logEvent(payload) {
   } finally {
     lock.releaseLock();
   }
-}
-
-// Return this participant's events, newest first, capped. Returns { invalid: true } instead
-// of the rows if the study/participant ID isn't (or is no longer) on the Setup tab's allowlist.
-function getHistory(req) {
-  if (!req || !isValidParticipant_(req.study_id, req.participant_id)) {
-    return { invalid: true, rows: [] };
-  }
-  const sh = ensureSheet_();
-  const values = sh.getDataRange().getValues();
-  const studyU = String(req.study_id).trim().toUpperCase();
-  const partU = String(req.participant_id).trim().toUpperCase();
-  const out = [];
-  for (let i = 1; i < values.length; i++) {
-    const o = rowToObj_(values[i]);
-    if (String(o.study_id).trim().toUpperCase() === studyU &&
-        String(o.participant_id).trim().toUpperCase() === partU) {
-      out.push(o);
-    }
-  }
-  out.sort(function (a, b) { return b.event_epoch_ms - a.event_epoch_ms; });
-  return { invalid: false, rows: out.slice(0, req.limit || 200) };
 }
 
 // Edit an existing Sleep/Wake event's date & time. Only entries within the edit window

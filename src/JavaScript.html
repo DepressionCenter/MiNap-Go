@@ -3,6 +3,7 @@ This file is part of MiNap Go
 JavaScript.html
 Author(s): Gabriel Mongefranco
 Created: 2026-07-09
+Last Modified: 2026-08-18
 Summary: Client-side logic: session/auth, sleep state machine, history rendering, and sync with the server.
 Notes: See README file for documentation and full license information.
 
@@ -312,21 +313,18 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     }).join('');
   }
 
-  function refreshHistory(thenApplyHome) {
+  // The server has the final say on the allowlist: if this participant's ID was
+  // revoked, don't keep showing (possibly stale) local history — log out immediately.
+  function checkRevocation(thenApplyHome) {
     var session = load(K_SESSION, null);
     if (!session) return;
     google.script.run
       .withSuccessHandler(function (res) {
-        // The server has the final say on the allowlist: if this participant's ID was
-        // revoked, don't keep showing (possibly stale) history — log out immediately.
-        if (res && res.invalid) { forceLogout(MSG_INVALID_CREDENTIALS); return; }
-        var rows = (res && res.rows) || [];
-        if (rows.length) save(K_HISTORY, rows);
+        if (!res || !res.valid) { forceLogout(MSG_INVALID_CREDENTIALS); return; }
         if (thenApplyHome) applyHomeState();
-        if (!document.getElementById('screen-history').classList.contains('hidden')) renderHistory();
       })
       .withFailureHandler(function () {}) // request never completed (offline/etc.) - stay logged in, retry later
-      .getHistory({ study_id: session.study_id, participant_id: session.participant_id });
+      .validateLogin(session.study_id, session.participant_id);
   }
 
   // ----- editing a previous entry's date/time -----
@@ -482,7 +480,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     show('screen-home');
     applyHomeState();   // from cache first (instant)
     flushQueue();
-    refreshHistory(true); // then reconcile with server, re-apply state
+    checkRevocation(true); // catches a revoked ID, then re-applies state
   }
 
   // Clears the local session and returns to login. `message`, if given, is toasted
@@ -512,7 +510,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
       renderHistory();
       showOverlay(false);
       show('screen-history');
-      refreshHistory(false); // reconcile with server; also catches a revoked ID
+      checkRevocation(false); // catches a revoked ID
     });
     document.getElementById('btn-back').addEventListener('click', function () { show('screen-home'); applyHomeState(); });
     document.getElementById('history-list').addEventListener('click', function (e) {
