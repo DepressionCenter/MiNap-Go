@@ -106,18 +106,28 @@ new landing page will send more people to it.
 
 One Sheet per deployment. It may hold more than one study.
 
+The layout below is not written into the provisioning code. It comes from a
+template of plain files that the build turns into a description the server walks.
+See section 3.8.
+
 ### 3.1 Tabs
 
 | Tab | What it holds | Who writes it |
 |---|---|---|
-| Instructions | Setup steps and the shareable app URL | The app writes the URL; the rest is fixed text |
-| Setup | Study settings, schema version, dashboard filter | Researcher |
+| README | How to deploy, and where to go next | The only tab the template Sheet ships with |
+| Setup | Study settings, schema version, the shareable URL, the dashboard filter | The app writes the URL; the researcher fills the rest |
 | Participants | The list of who may log in, and their PIN records | Researcher adds rows; the app writes PIN fields |
 | Questions | The daily survey | Researcher |
 | SleepDiary | Sleep and wake markers | The app |
 | EMA | Daily survey responses | The app |
-| Dashboard | Four charts | Formulas only |
-| \_calc | Hidden helper tables for the charts | Formulas only |
+| Dashboard | Four charts | Created by the app; driven by formulas |
+| \_calc | Hidden helper tables for the charts | Created by the app |
+
+Only README exists before deployment. Everything else appears the first time the
+researcher opens their web app. See section 3.8.
+
+The README tab in the template needs rewriting for version 1: the current text
+describes a Setup tab with three columns and no PIN step, which stops being true.
 
 ### 3.2 Setup
 
@@ -304,16 +314,63 @@ One row per marker.
 | `record_id` | Unique ID generated on the device |
 | `study_id`, `participant_id` | |
 | `marker` | `SLEEP` or `WAKE` |
-| `ts_utc` | ISO 8601 in UTC. The one true timestamp |
-| `ts_local` | ISO 8601 with the local offset |
-| `tz` | IANA zone name, for example `America/Detroit` |
-| `sleep_day` | See section 4 |
-| `edited` | `TRUE` if the participant corrected the time |
-| `created_at_utc`, `updated_at_utc` | |
+| `event_local` | ISO 8601 local time with offset, for example `2026-08-16T23:30-04:00` |
+| `event_tz` | IANA zone name, for example `America/Detroit` |
+| `event_utc` | ISO 8601 in UTC. The one unambiguous instant |
+| `sleep_day` | The night this marker belongs to. See section 3.5.1 |
+| `edited` | `YES` or `NO` |
+| `modified_utc` | When the participant last changed the time. Empty if never edited |
+| `received_utc` | When the server accepted the row |
+| `source` | How it arrived, for example `web` |
 | `app_version` | |
 
-This replaces the five overlapping time fields in the current code. Three fields
-is the smallest set that survives daylight saving time and travel.
+Three time fields is the smallest set that survives daylight saving time and
+travel: what the clock said, where that clock was, and the instant it names.
+
+**On `received_utc`.** The old `created_at_iso` was confusing because for most
+rows it duplicated the event time. It is worth keeping under a clearer name,
+because the two are not the same whenever an entry was queued offline: the event
+happened at 23:30 and reached the Sheet at 07:15 the next morning. Without it,
+there is no way to tell an entry logged in the moment from one that synced days
+later, which is exactly the distinction a data-quality check needs. If you would
+rather not keep it, drop it deliberately rather than by accident.
+
+### 3.5.1 How `sleep_day` is filled in
+
+`sleep_day` is the join key between this tab and the EMA tab. Getting it right
+matters more than getting it quickly, so the **server** fills it in. Not the
+client, and not a formula.
+
+- **SLEEP markers.** Apply the noon rule from section 4 to the marker's own local
+  time. Purely arithmetic, no lookup.
+- **WAKE markers.** Find the most recent SLEEP for the same study and participant
+  whose instant is at or before this one, and copy its `sleep_day`. That ties the
+  pair together explicitly.
+- **A WAKE with no SLEEP before it.** Fall back to the noon rule on the WAKE's own
+  local time, which puts an early-morning wake on the previous day. Correct, and
+  it means the column is never empty.
+- **Edits.** Changing a SLEEP time can move it across noon. When that happens, the
+  server recomputes that marker's `sleep_day` and updates the WAKE paired with it
+  in the same locked operation, so a pair can never disagree.
+
+**Why not the client.** It looks tempting, because the app knows which SLEEP it is
+closing. But its copy of history can be cleared by the browser, and a participant
+who logs sleep on a phone and wake on a tablet leaves the second device with no
+record of the first marker. A join key computed from data the client might not
+have is a join key that will sometimes be wrong. The client may compute one for
+display; the server's value is the one that is stored.
+
+**Why not a formula.** Rows are appended by code, so each new row would need the
+formula written into it anyway. A formula also recalculates, which means an
+earlier row's stored value could change later, and sorting the tab would break it.
+
+The server reads backwards from the last row until it finds the matching SLEEP or
+passes a sensible limit, so the cost does not grow with the size of the study. All
+of this happens inside the lock that already guards writes, so two devices
+submitting at once cannot interleave.
+
+The EMA tab needs no lookup: a morning diary is filled in after waking, so the
+noon rule applied to `start_datetime` names the night being reported.
 
 ### 3.6 EMA
 
@@ -348,6 +405,60 @@ A deployed copy of MiNap Go never receives an update. Adding a column later mean
 every researcher edits their own Sheet by hand. So version 1 creates every column
 it will plausibly need, including all twenty `EMA_` columns even though ten are
 shown. Empty columns cost nothing.
+
+---
+
+### 3.8 How the tabs get created
+
+The template Sheet holds **only a README tab** explaining how to deploy. It has no
+script attached and therefore no deployment, so it cannot contain working tabs: a
+Dashboard drawn there would point at ranges that do not exist yet. Every tab, and
+every chart, is created by the app the first time a researcher opens the deployed
+web app.
+
+The layout is a declaration at the top of the server code, not steps inside a
+function:
+
+```js
+const WORKBOOK = {
+  schemaVersion: 1,
+  tabs: [
+    { name: 'Setup', frozenRows: 1, columns: [
+        { header: 'Active Study ID', width: 140,
+          note: 'Your study ID. Give this to participants at enrollment.',
+          defaults: ['STUDY1'] }
+      ]
+    }
+  ]
+};
+```
+
+One function walks it and builds what is missing. Adding a column is one line, in
+one file, and it shows up plainly in a code review.
+
+This was very nearly a set of separate template files that the build turned into
+code. That was over-engineering: the schema is frozen after version 1 ships, so
+optimising for editing it often solves a problem that does not exist. The benefit
+worth keeping is that the layout is data you can read in one place, and a constant
+gives that for nothing.
+
+The four charts in section 11 are created the same way, using the Apps Script
+chart builder. Fix the size of the `_calc` tab in the declaration — fourteen date
+rows, twenty question rows — so chart ranges are constants that never need
+recalculating.
+
+### 3.9 Never clear a tab
+
+The current code wipes a tab when its headers do not match what it expects. That
+was survivable when a tab held nothing but appended rows. It is not survivable
+now: Setup holds participant IDs and PIN records typed by a researcher, and the
+Dashboard holds charts.
+
+Provisioning creates what is missing and leaves everything else alone. If it finds
+a tab whose shape it does not recognise, it stops and says so rather than
+repairing by deletion. `schemaVersion` is written into Setup on creation and
+checked on later opens, so a Sheet built by an older version is detected instead
+of silently written to.
 
 ---
 
@@ -769,6 +880,21 @@ channel.
 | Survey answers | Never editable |
 | Missing survey | May be added as a whole survey. Individual answers cannot be filled in later |
 
+Seven days is the default, set as `edit_window_days` in Setup so a study can
+choose differently. Measuring from the stored time rather than the proposed one
+stops somebody walking an entry backwards a week at a time.
+
+**The server enforces this, and the app also enforces it.** The app hides the edit
+control on anything older, which is what a participant experiences. The server
+checks again before writing, which is what actually holds, because the app runs on
+a device and anything a device sends is untrusted. An edit that arrives outside
+the window is refused with a message the participant can act on.
+
+One case falls between the two: an edit made inside the window, queued because the
+device was offline, and delivered after the window has closed. The server judges
+it by when the edit was made, not when it arrived, so a participant is never
+punished for having no signal. The queued item carries that time.
+
 Adding a survey after the fact needs care. `start_datetime` and `end_datetime`
 must record when the participant actually answered, with the night it refers to
 carried in `sleep_day`. Otherwise completion rates look better than they were.
@@ -896,13 +1022,29 @@ Both builds write to the device first and show the entry immediately. Sending it
 onward is a second step that is allowed to fail.
 
 In the study build, a submission that does not reach the Sheet goes into a queue
-and is retried when the app is next open and online. The queue drains one item at
-a time; a failure stops the drain until the next attempt, so a server problem
-cannot turn into a flood of retries.
+and is retried when the app is next open and online. This covers new markers, new
+surveys, and edits alike; anything that has to reach the server goes through it.
+
+The queue lives in the same storage as everything else, so closing the app or
+reloading the page does not lose it. It drains oldest first, one item at a time. A
+failure stops the drain until the next attempt, so a server problem cannot turn
+into a flood of retries, and items keep their original order.
+
+**Retrying is safe because every item carries its `record_id`.** The hardest case
+is a submission that reached the Sheet but whose reply was lost on the way back:
+the app still thinks it failed and will send it again. The server treats a
+`record_id` it has already stored as the same entry, updates it rather than adding
+a second row, and reports success. A flaky connection can therefore never produce
+duplicate nights.
 
 One case never retries: a submission rejected because the Study ID or Participant
 ID is no longer allowed. That will never succeed, so it is dropped from the queue
 and the participant is told to contact the study team.
+
+Nothing is removed from the queue until the server confirms it. An entry the
+participant can see on their phone but that has not yet reached the Sheet is
+marked as not yet sent, so they are never misled about what the study has
+received.
 
 The limit is worth stating plainly, because it shapes what you tell participants.
 The study build has no service worker, so the queue only works **while the app is
@@ -962,27 +1104,131 @@ code, or PDF whenever you want to. Export a backup every so often.
 
 ## 16. Building and releasing
 
-One repository, one core, two outputs.
+One repository, one shared core, two packaged outputs. A small Python script
+using only the standard library turns the first into the other two. No Node, no
+package manager, no lockfile, and nothing that talks to Google.
 
-| Part | Holds |
-|---|---|
-| `src/` | Everything the app does: screens, diary, questions, storage, charts, export and import, notes, sharing |
-| `gas/` | The Apps Script wrapper, `Code.gs`, and the generated single-page bundle |
-| `app/` | The standalone wrapper, service worker, and app manifest |
-| `build.js` | Produces both outputs from `src/` |
+### 16.1 Why a build step exists
 
-The build is what keeps the two apps honest. It inlines the core into one file for
-Apps Script and copies it, plus the service worker and manifest, into the
-standalone folder. The code that sends data to a server is only included in the
-Apps Script output, and the code for sharing, PDFs, and installation is only
-included in the standalone output. Neither is present-but-disabled in the other.
-A reviewer can confirm this by searching the built files, which is a much stronger
-statement than a setting.
+Apps Script cannot serve a plain `.js` file. Its page service only reads files
+saved as HTML, so shared code has to arrive there wrapped in a `<script>` tag.
+The standalone site wants the same code as an ordinary `.js` file that a service
+worker can cache. Same characters, different container.
 
-Releasing means running the build, then pasting the Apps Script output into the
-template Sheet's project and pushing the standalone output to the site. There is
-no automated deployment, deliberately: every study is a separate copy under
-someone else's account, and nothing should be able to change them all at once.
+Keeping two hand-maintained copies would guarantee they drift. The script does
+the packaging instead. It never contacts a server, never deploys anything, and
+never needs a credential. Releasing is still copy and paste, exactly as this
+project has always done it.
+
+### 16.2 The seven-file separation
+
+The shared code splits into seven parts. The split is not sleep-specific; it is
+what any browser application without a framework needs, and the boundaries are
+chosen so each part has one reason to change. Use it as a starting point for
+other projects.
+
+| # | Role | `src/` | `gas/` | `app/` |
+|---|---|---|---|---|
+| 1 | Shell markup | `index.html` | `Index.html` | `index.html` |
+| 2 | Styles | `styles.css` | `Stylesheet.html` | `styles.css` |
+| 3 | Environment adapter | `platform/*.js` | `Platform.html` | `platform.js` |
+| 4 | Storage, schema, migrations | `data/*.js` | `Core.html` | `core.js` |
+| 5 | Domain rules | `logic/*.js` | (same file as 4) | (same file as 4) |
+| 6 | Screens, charts, startup | `ui/*.js` | `App.html` | `app.js` |
+| 7 | Server code | `server/Code.gs` | `Code.gs` | not present |
+
+`appsscript.json` goes alongside as a settings file rather than code.
+
+**The environment adapter is the important one.** It is the only part that knows
+which build it is running in: how data is sent, what storage is available,
+whether sharing exists at all. Everything above it is identical in both builds.
+That is what makes the promise in section 1 checkable, because a reviewer has one
+short file to read rather than a whole application to search.
+
+Parts 4 and 5 stay separate in `src/`, because storage and rules change for
+different reasons, but they are packaged into one output file to stay inside the
+seven.
+
+Dependencies run one way only: shell, then adapter, then storage, then rules,
+then screens. Nothing lower may reference anything higher. The packaging order
+follows the same sequence, so a file can never use something defined after it.
+
+### 16.3 What each output looks like
+
+`gas/` is seven files, always, however many files `src/` grows to. A person
+pastes them into the Apps Script editor by hand, so the count has to stay
+predictable.
+
+`app/` is packaged for a browser instead, and several of its files cannot be
+merged even if you wanted to:
+
+```
+app/
+  index.html      shell
+  app.js          screens and startup
+  core.js         storage and rules
+  platform.js     environment adapter
+  styles.css
+  sw.js           must be its own file; its address decides what it controls
+  manifest.json   fetched as JSON by the browser
+  report.html     opens on its own, see 16.5
+  icons/          192 and 512 pixel icons, including a maskable one
+```
+
+`sw.js` is generated rather than copied. The script writes the cache name and the
+list of files to precache, both derived from the contents of the build, so a
+stale cache cannot be caused by someone forgetting to change a number by hand.
+Deriving the name from a hash of the built files also means a build that changes
+nothing produces identical output, which is what makes the check in section 16.6
+trustworthy.
+
+### 16.4 Both outputs are committed to the repository
+
+Normally build output would be left out of version control. Not here.
+
+`app/` is what the website serves, so it has to be in the repository. `gas/` is
+what a researcher pastes, and a researcher is not going to install Python and run
+a script to deploy a sleep diary. So both are generated **and** committed, and
+`src/` is for developers only.
+
+That creates one hazard: somebody edits a generated file in a hurry and loses the
+change on the next build. Two guardrails:
+
+- Every generated file carries a line under its licence header saying it was
+  generated from `src/`, must not be edited, and where the real source is.
+- Nothing in `gas/` or `app/` is ever written by hand, including `Code.gs`. It is
+  authored at `src/server/Code.gs` and copied. One hand-edited file in a folder of
+  generated ones is an invitation to edit the wrong thing.
+
+### 16.5 The report viewer
+
+`report.html` is built from a template. The template holds the page structure with
+markers, and the script fills them from the same sources the app uses, so the
+decoding, the cryptography, and the charts exist in exactly one place.
+
+The result is a single self-contained file. That matters for the same reason the
+study build runs on Apps Script: a report somebody saved should still open years
+later, whether or not this website still exists.
+
+### 16.6 Checking and releasing
+
+`build.py --check` rebuilds into memory and stops with an error if `gas/` or
+`app/` differ from what `src/` produces. Run it before every release. It catches
+the case where a generated file was edited directly.
+
+Then: paste the seven files in `gas/` into the Apps Script project, and push
+`app/` to the site.
+
+There is no automated deployment, deliberately. Every study is a separate copy
+under somebody else's Google account, and nothing should be able to change them
+all at once.
+
+The Sheet layout is not a build input. It is a declaration in the server code; see section 3.8.
+
+Minification is not part of version 1. Compression over the network already
+recovers most of what it would save, and the output in `gas/` is a file people
+read and compare between releases. Revisit it only if a measured payload turns
+out to be a problem.
 
 ---
 
@@ -1044,6 +1290,19 @@ sleep-day rule and the charts both assume one. See section 19.
 **Pulling history back from the Sheet.** Ruled out. See section 7.
 
 **A native phone app.** The plan is to prove the idea works first.
+
+**Rendering reports through DataLaVista.** DataLaVista already keeps a report
+definition — views, queries, widgets, layout — separate from the data it renders,
+and it already accepts a report definition by URL. A shared MiNap report could
+therefore become a two-part address: which report design and version to use,
+given as the address of a JSON file, and the encrypted data itself. That would
+give clinicians a far richer view than a hand-drawn chart, and would remove the
+report layout from this project entirely.
+
+Two things stand in the way for version 1. DataLaVista would need to accept data
+passed in the address rather than fetched, and decrypt it in the browser. And a
+report definition is larger than packed binary, which pushes against the size
+limit in section 9.2. Worth revisiting once the sharing feature has real use.
 
 ---
 

@@ -40,15 +40,31 @@ The one phase with real urgency.
 - Remove `getHistory` from `Code.gs`. It runs on the server and returns a
   participant's diary to anyone who knows a Study ID and Participant ID, both of
   which are published in the repository. Rename `include` to `include_`.
-- Split the repository into `src/`, `gas/`, and `app/`, with `build.js` producing
-  the two outputs from the one core.
+- Split the repository into `src/`, `gas/`, and `app/`, following the seven-file
+  separation in section 16.2 of the specification. `build.py` packages `src/`
+  into the other two, using only Python's standard library.
+- Commit both outputs. `app/` is what the site serves; `gas/` is what a person
+  pastes. Mark every generated file as generated.
+- Add `build.py --check`, which rebuilds into memory and fails if the committed
+  output does not match the source.
 - Move the existing root `index.html` to `demo/`.
 - Write a new root landing page: what the app is, a way into `/app/`, and a
   section for researchers linking to the demo and the setup guide.
 - Confirm the spreadsheet embedded in the demo holds only invented data.
+- **Update the existing documentation in the same change.** The README tells
+  developers to copy four specific files out of `src/`; after this phase they copy
+  seven files out of `gas/`, and `src/` is source that is never pasted. The code
+  maintenance note in `docs/Overview.md` says there is no build step, which stops
+  being true. Both are instructions somebody will follow, so leaving them stale
+  is a defect, not a tidy-up.
+- Keep the manual deployment steps in the README, aimed at developers. Researchers
+  are still told to copy the template Sheet, but the copy-and-paste route has to
+  stay documented and correct.
 
-**Done when** the security fix is deployed to the demo, the build produces both
-outputs from one source, and the three pages load.
+**Done when** the security fix is deployed to the demo, `build.py` produces both
+outputs from one source, `--check` passes on a clean tree, the three pages load,
+and somebody can follow the README's manual steps end to end without hitting a
+path that no longer exists.
 
 ---
 
@@ -59,8 +75,20 @@ column added later has to be added by hand in every researcher's Sheet.
 
 **Deliverables**
 
-- The template Sheet with all tabs: Instructions, Setup, Participants, Questions,
-  SleepDiary, EMA, Dashboard, `_calc`.
+- The workbook layout as a declaration at the top of the server code, per section
+  3.8. One function walks it and creates what is missing: Setup, Participants,
+  Questions, SleepDiary, EMA, Dashboard, `_calc`. No tab layout written into the
+  body of a function, and no build step involved.
+- The four charts, created by the same pass using the Apps Script chart builder,
+  against a `_calc` tab whose size is fixed in the declaration.
+- Provisioning that never clears a tab. It creates what is missing and stops with
+  a clear message if it finds a shape it does not recognise. Losing a researcher's
+  participant list or their charts to a header mismatch is not acceptable.
+- `sleep_day` filled in by the server for both marker types, including the lookup
+  that pairs a WAKE to its SLEEP and the recompute when an edit moves a marker
+  across noon.
+- A rewritten README tab for the template Sheet. The current text describes a
+  three-column Setup tab and no PIN step.
 - All twenty `EMA_` columns, even though eight are used. All Questions columns,
   including the ones only the standalone build reads.
 - The Consensus Sleep Diary Core questions as defaults, numbered to match the
@@ -68,15 +96,22 @@ column added later has to be added by hand in every researcher's Sheet.
 - Server functions: `validateLogin`, `setPin`, `verifyPin`, `getConfig`,
   `logMarker`, `logSurvey`, `updateMarker`. No function returns diary data.
 - PIN storage with a per-participant random salt, and a lockout counter.
-- `schema_version` written and checked.
+- `schemaVersion` in the declaration, written into Setup on creation and checked on
+  later opens, so a Sheet built by an older version is detected rather than
+  silently written to.
+- Documentation updated with the tabs, the columns, and what a researcher edits by
+  hand. A manual deployment into a blank Sheet now gets everything, charts
+  included, so the developer route and the template route end in the same place.
 
-**Done when** a new Sheet builds its own tabs on first open, a participant can be
-added and can set a PIN, a marker and a survey both land in the right tabs, and a
-wrong PIN locks the account after the set number of tries.
+**Done when** a copy of the template with only its README tab builds every other
+tab and all four charts on first open, a participant can be added and can set a
+PIN, a marker and a survey land in the right tabs with matching `sleep_day`
+values, and a wrong PIN locks the account after the set number of tries.
 
 **Check before moving on:** ask the server for data as an unauthenticated caller
 and confirm nothing readable comes back. Try to edit another participant's row by
-guessing a record ID and confirm it is refused.
+guessing a record ID and confirm it is refused. Run provisioning twice against a
+Sheet holding typed-in participant IDs and confirm nothing was lost.
 
 ---
 
@@ -150,9 +185,12 @@ than as encryption.
   and easy to test later; several parts are the reverse.
 - **Freeze after Phase 2.** If a column has to change after that, it is cheaper to
   change it before any study starts than to ask researchers to edit their Sheets.
+- **Documentation is part of each phase.** Any phase that changes a step somebody
+  follows updates the README and `/docs` in the same change set. Stale
+  instructions are a defect.
 - **Accessibility is part of each phase**, not a pass at the end. Keyboard
   traversal, visible focus, 200% zoom, and a screen reader on the main flow.
-- The open questions in section 19 of the specification should be answered before
+- The open questions in section 20 of the specification should be answered before
   the phase that depends on them. The Consensus Sleep Diary permission question
   blocks Phase 2.
 
@@ -176,3 +214,6 @@ specification before writing anything.
 - [MiNap Go repository](https://github.com/DepressionCenter/MiNap-Go)
 
 [⬅ Back to README](../README.md)
+
+----
+Copyright © 2026 The Regents of the University of Michigan
