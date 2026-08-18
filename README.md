@@ -3,7 +3,7 @@ This file is part of MiNap Go.
 README.md
 Author(s): Gabriel Mongefranco
 Created: 2026-06-26
-Last Modified: 2026-07-10
+Last Modified: 2026-08-18
 Summary: MiNap Go: a standalone, ready-to-run version of MiNap (sleep diary app for research) with no additional technology required. This file provides an overview of the project, in Markdown format.
 Notes: See README file for documentation and full license information.
 
@@ -52,14 +52,14 @@ Want to try it first? Check out the [live demo](https://code.depressioncenter.or
 
 
 ### Optional: manual deployment into a blank project
-You can also deploy the app manually into a blank project if you want to rebuild it from scratch instead of copying the template Sheet:
+You can also deploy the app manually into a blank project if you want to rebuild it from scratch instead of copying the template Sheet. `src/` is where the code is written and maintained; it is never pasted directly. `gas/` is the packaged copy `build.py` produces from `src/`, and that's what you paste in below.
 
 1. Create a new Google Sheet. This becomes your data store.
-2. Open the sheet and click**Extensions > Apps Script** to open the bound script project.
-3. Replace the default `Code.gs` contents with this repo's [`src/Code.gs`](src/Code.gs).
-4. **File > New > HTML file**, three times; name them exactly `Index`, `Stylesheet`, and `JavaScript`, and paste in the matching files from the repo's [`src`](src/) folder.
-5. Open Project Settings (gear icon) and enable "Show `appsscript.json` manifest file in editor"; open `appsscript.json`, delete its contents, and paste in this repo's [`src/appsscript.json`](src/appsscript.json).
-6. Click **Deploy > New deployment > Web app**. Set "Execute as" to "Me" to ensure it runs under your account. Set "Who has access" to "Anyone" so particants can access it without a Google account. Authorize the script (as described in the quick start guide).
+2. Open the sheet and click **Extensions > Apps Script** to open the bound script project.
+3. Replace the default `Code.gs` contents with this repo's [`gas/Code.gs`](gas/Code.gs).
+4. **File > New > HTML file**, five times; name them exactly `Index`, `Stylesheet`, `Platform`, `Core`, and `App`, and paste in the matching files from the repo's [`gas`](gas/) folder.
+5. Open Project Settings (gear icon) and enable "Show `appsscript.json` manifest file in editor"; open `appsscript.json`, delete its contents, and paste in this repo's [`gas/appsscript.json`](gas/appsscript.json). (Its license notice lives beside it in `gas/appsscript.json.LICENSE.txt` instead, since JSON has no comment syntax to hold one -- nothing in that file needs pasting.)
+6. Click **Deploy > New deployment > Web app**. Set "Execute as" to "Me" to ensure it runs under your account. Set "Who has access" to "Anyone" so participants can access it without a Google account. Authorize the script (as described in the quick start guide).
 7. Open the web app URL once; the shareable URL is written to the **Setup** tab.
 
 Because the script is created from inside the Sheet, it is bound to that Sheet. All data will be written there, so it is important not to share it with anyone outside your study team or technical support.

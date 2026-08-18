@@ -2,9 +2,12 @@
 This file is part of MiNap Go
 index.html
 Author(s): Gabriel Mongefranco
-Created: 2026-07-10
-Summary: Static GitHub Pages landing page embedding the live MiNap Go web app and its published data sheet side by side.
-Notes: This is a plain static page (not an Apps Script template) served via GitHub Pages. See README file for documentation and full license information.
+Created: 2026-08-18
+Last Modified: 2026-08-18
+Summary: Root landing page for the MiNap Go site. Plain static HTML, outside the src/ build
+  pipeline (same as demo/index.html) -- describes the project, links to the standalone app and
+  the researcher demo, and is never bundled by build.py.
+Notes: See README file for documentation and full license information.
 
 Copyright © 2026 The Regents of the University of Michigan
 
@@ -22,21 +25,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-
-<!-- Begin Google Analytics. Remove this section when re-using this file -->
-<!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-3Q455XWS5F"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-
-  gtag('config', 'G-3Q455XWS5F');
-</script>
-<!-- End Google Analytics -->
-
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MiNap Go: Live Demo</title>
+<title>MiNap Go</title>
 <style>
   :root {
     --indigo: #4c4b8a;
@@ -45,7 +35,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     --amber: #f6b656;
     --amber-deep: #e89a2c;
     --ink: #2b2a44;
-    --muted: #8a89a6;
+    --muted: #5c5a78;
     --card: #ffffff;
     --line: #ece9f7;
     --radius: 22px;
@@ -61,138 +51,198 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     background: linear-gradient(160deg, #2e2c5c 0%, #4c4b8a 45%, #b9a7e8 100%);
     background-attachment: fixed;
     -webkit-font-smoothing: antialiased;
+    line-height: 1.6;
   }
 
-  body {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 28px 20px 90px;
+  body { padding: 0 0 40px; }
+
+  a { color: var(--indigo); }
+  a:focus-visible, button:focus-visible {
+    outline: 3px solid var(--amber);
+    outline-offset: 2px;
   }
 
+  .wrap {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 0 20px;
+  }
+
+  /* Hero: kept short and near the top of the page, where the background gradient is
+     darkest, so the light text here stays comfortably above 4.5:1 contrast without
+     needing its own solid background. */
   header.hero {
-    width: 100%;
-    max-width: 1200px;
-    text-align: center;
+    padding: 28px 0 40px;
     color: #fff;
-    margin-bottom: 22px;
+    text-align: center;
   }
-  .brand-glyph { font-size: 40px; line-height: 1; }
-  header.hero h1 { margin: 8px 0 6px; font-size: 30px; letter-spacing: 0.5px; }
-  header.hero p.tagline { margin: 0 0 16px; color: #d9d5f4; font-size: 15px; }
 
-  .btn-github {
+  nav.primary-nav {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-bottom: 28px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  nav.primary-nav a {
+    color: #fff;
+    text-decoration: none;
+    padding: 6px 4px;
+    border-bottom: 2px solid transparent;
+  }
+  nav.primary-nav a:hover, nav.primary-nav a:focus-visible {
+    border-bottom-color: var(--amber);
+  }
+
+  .brand-glyph { font-size: 44px; line-height: 1; }
+  header.hero h1 { margin: 10px 0 8px; font-size: 34px; letter-spacing: 0.5px; }
+  header.hero .tagline {
+    margin: 0 auto 26px;
+    max-width: 46ch;
+    color: #e7e4fa;
+    font-size: 16px;
+  }
+
+  .btn {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 8px;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 700;
-    color: #fff;
-    background: rgba(255, 255, 255, 0.12);
-    border: 1.5px solid rgba(255, 255, 255, 0.4);
-    padding: 9px 18px;
+    padding: 14px 28px;
     border-radius: 999px;
     text-decoration: none;
-    transition: all 0.2s;
+    min-height: 44px;
+    border: none;
   }
-  .btn-github:hover, .btn-github:focus {
+  .btn-primary {
+    color: var(--indigo-deep);
     background: var(--amber);
-    color: var(--ink);
-    border-color: var(--amber);
   }
+  .btn-primary:hover { background: var(--amber-deep); }
+  .btn-primary:active { transform: scale(0.98); }
 
-  .frames {
-    width: 100%;
-    max-width: 1200px;
-    display: flex;
-    align-items: stretch;
-    gap: 20px;
-  }
+  /* Content sections: always white cards on the gradient, so body text contrast never
+     depends on where a section happens to land against the background. */
+  main { display: flex; flex-direction: column; gap: 20px; }
 
-  .panel {
+  section.card {
     background: var(--card);
     border-radius: var(--radius);
-    box-shadow: 0 24px 60px rgba(20, 18, 50, 0.35);
-    padding: 14px;
+    box-shadow: 0 24px 60px rgba(20, 18, 50, 0.28);
+    padding: 32px clamp(20px, 5vw, 44px);
+  }
+
+  section.card h2 { margin: 0 0 14px; font-size: 22px; }
+  section.card p { margin: 0 0 14px; max-width: 68ch; }
+  section.card p:last-child { margin-bottom: 0; }
+
+  .card-actions {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 18px;
   }
+  .btn-secondary {
+    /* Solid, not the violet-to-indigo gradient used elsewhere on the site: at the violet
+       end that gradient puts white text under 4.5:1 contrast. Solid indigo-deep clears it
+       (roughly 7.8:1) across the whole button. */
+    color: #fff;
+    background: var(--indigo-deep);
+  }
+  .btn-secondary:hover { background: #201e42; }
+  .btn-secondary:active { transform: scale(0.98); }
 
-  .panel-app {
-    flex: 0 0 460px;
-    max-width: 460px;
-  }
-  .panel-sheet {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  .panel h2 {
-    margin: 2px 8px 12px;
-    font-size: 14px;
-    font-weight: 700;
+  .btn-outline {
     color: var(--indigo);
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-  }
-
-  .panel iframe {
-    width: 100%;
-    flex: 1 1 auto;
+    background: #fff;
     border: 1.5px solid var(--line);
-    border-radius: 14px;
-    background: #fbfaff;
   }
-  .panel-app iframe { height: 620px; }
-  .panel-sheet iframe { height: 620px; }
+  .btn-outline:hover { border-color: var(--violet); }
+  .btn-outline:active { transform: scale(0.98); }
 
-  @media (max-width: 900px) {
-    .frames { flex-direction: column; }
-    .panel-app { flex: 1 1 auto; max-width: none; }
-    .panel-app iframe, .panel-sheet iframe { height: 620px; }
+  ul.feature-list {
+    margin: 0;
+    padding-left: 1.2em;
+    max-width: 68ch;
   }
+  ul.feature-list li { margin-bottom: 8px; }
+  ul.feature-list li:last-child { margin-bottom: 0; }
 
-  .site-footer {
-    margin-top: 26px;
+  footer.site-footer {
+    margin-top: 36px;
     text-align: center;
     font-size: 12px;
-    color: rgba(255, 255, 255, 0.75);
+    color: rgba(255, 255, 255, 0.8);
     padding: 0 16px;
   }
-  .site-footer a {
-    color: inherit;
-    text-decoration: underline;
+  footer.site-footer a { color: inherit; text-decoration: underline; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .btn-primary:active, .btn-secondary:active, .btn-outline:active { transform: none; }
   }
 </style>
 </head>
 <body>
 
   <header class="hero">
-    <div class="brand-glyph">&#127769;</div>
-    <h1>MiNap Go: Live Demo</h1>
-    <p class="tagline">Try the participant web app and see entries land in the study spreadsheet in real time.</p>
-    <a class="btn-github" href="https://github.com/DepressionCenter/MiNap-Go" target="_blank" rel="noopener">
-      View on GitHub
-    </a>
+    <div class="wrap">
+      <nav class="primary-nav" aria-label="Primary">
+        <a href="app/index.html">Try the app</a>
+        <a href="#researchers">For researchers</a>
+        <a href="https://github.com/DepressionCenter/MiNap-Go" target="_blank" rel="noopener">View on GitHub</a>
+      </nav>
+      <div class="brand-glyph" aria-hidden="true">&#127769;</div>
+      <h1>MiNap Go</h1>
+      <p class="tagline">A browser-based sleep diary. Tap Sleep, tap Wake, and answer a short
+        morning survey -- no account needed to try it, and no extra technology to run a study.</p>
+      <a class="btn btn-primary" href="app/index.html">Try the standalone app</a>
+    </div>
   </header>
 
-  <div class="frames">
-    <section class="panel panel-app">
-      <h2>Web App</h2>
-      <iframe
-        src="https://script.google.com/macros/s/AKfycbxY0nY2B0JhgMKi8tYZvT2wuPiXRPxBlUuWmWy81nYAQZallWiM91_Cc_hVu0gEyPTG/exec?allowEmbed=true"
-        title="MiNap Go web app"
-        loading="lazy"></iframe>
+  <main class="wrap">
+
+    <section class="card" aria-labelledby="about-heading">
+      <h2 id="about-heading">What MiNap Go is</h2>
+      <p>MiNap Go is a sleep diary built on the Consensus Sleep Diary, the instrument
+        researchers commonly use to study sleep. Two taps record when you fall asleep and
+        when you wake, and a short daily survey fills in the rest.</p>
+      <p>It comes in two versions that never share data with each other:</p>
+      <ul class="feature-list">
+        <li><strong>The standalone app</strong> keeps everything on your own device. No
+          account, no server, and it works offline once installed.</li>
+        <li><strong>The study version</strong> is what a researcher deploys for a research
+          study. It saves each participant's entries to that researcher's own private
+          Google Sheet.</li>
+      </ul>
     </section>
 
-    <section class="panel panel-sheet">
-      <h2>Data Sheet</h2>
-      <iframe
-        src="https://docs.google.com/spreadsheets/d/1Xm3wDOQQP_ZA__r19u2dkZVFWI7Xz3_Cb7cDcx45_ZM/edit?rm=minimal&gid=227063880&range=A500"
-        title="MiNap Go demo spreadsheet"
-        loading="lazy"></iframe>
+    <section class="card" aria-labelledby="try-heading">
+      <h2 id="try-heading">Track your own sleep</h2>
+      <p>The standalone app runs entirely in your browser. Nothing you enter is sent
+        anywhere, and you can install it so it keeps working without a connection.</p>
+      <div class="card-actions">
+        <a class="btn btn-secondary" href="app/index.html">Open the standalone app</a>
+      </div>
     </section>
-  </div>
+
+    <section class="card" id="researchers" aria-labelledby="researchers-heading">
+      <h2 id="researchers-heading">For researchers</h2>
+      <p>Running a study with MiNap Go takes a Google account and a copy of the template
+        Sheet -- no server to host and no code to write. Each study gets its own Sheet, and
+        only your enrolled participants' IDs can log data to it.</p>
+      <div class="card-actions">
+        <a class="btn btn-outline" href="demo/index.html">Try the live demo</a>
+        <a class="btn btn-outline"
+           href="https://github.com/DepressionCenter/MiNap-Go#quick-start-guide"
+           target="_blank" rel="noopener">Read the Quick Start Guide</a>
+      </div>
+    </section>
+
+  </main>
 
   <footer class="site-footer">
     &copy; 2026 The Regents of the University of Michigan &nbsp;|&nbsp; <a href="https://depressioncenter.org" target="_blank" rel="noopener">Eisenberg Family Depression Center</a>

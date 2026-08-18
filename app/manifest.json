@@ -1,0 +1,8 @@
+{
+  "name": "MiNap Go",
+  "short_name": "MiNap Go",
+  "start_url": "index.html",
+  "display": "standalone",
+  "background_color": "#2e2c5c",
+  "theme_color": "#4c4b8a"
+}

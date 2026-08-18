@@ -84,17 +84,33 @@ unreliable copy on their phone. Participant-facing text must say so plainly.
 ## 2. Site layout
 
 ```
-/                 Landing page: what the app is, install button, researcher section
-/app/             Standalone build (app shell, service worker, manifest)
-/demo/            The existing study-build demo page
+index.html        Landing page: what the app is, install button, researcher section
+app/              Standalone build (app shell, service worker, manifest)
+demo/             The existing study-build demo page
 ```
 
-The current `index.html` at the repository root is the study-build demo. It moves
-to `/demo/` unchanged. The new root page describes the project, sends members of
-the public to `/app/`, and sends researchers to `/demo/` and the setup guide.
+**Every path in the site is relative.** The site is not served from a domain root;
+it lives under a prefix, as in `code.depressioncenter.org/MiNap-Go/`. A link, a
+script tag, or a manifest entry written as `/app/` would break the moment the
+prefix changed, and would already be wrong today.
 
-The service worker registers with a scope of `/app/`, so it never caches the
-landing page or the demo.
+The current `index.html` at the repository root is the study-build demo. It moves
+to `demo/` unchanged. The new root page describes the project, sends members of
+the public to `app/`, and sends researchers to `demo/` and the setup guide.
+
+Only the standalone build has a service worker. Section 1 already rules one out
+for the study build, which runs inside an Apps Script frame.
+
+`app/sw.js` registers with no explicit scope, so the browser caps it at the
+directory it is served from. A service worker cannot claim a broader scope than
+its own directory unless the server sends a `Service-Worker-Allowed` header, which
+this site never does. That keeps it away from the landing page and the demo under
+any hosting prefix, with no path to keep in sync.
+
+The same applies to `manifest.json`. Its `start_url`, `scope`, and icon paths must
+be relative, for the same reason and with a worse failure: a manifest scope that
+does not cover the page it is linked from makes the app silently uninstallable,
+with no error a developer would notice.
 
 **Before this ships:** the demo page embeds a live web app URL and a live
 spreadsheet ID. Confirm that spreadsheet contains only made-up data, because the
@@ -783,7 +799,7 @@ a report records what matters in the medical record; this app never replaces it.
 The report travels inside the URL fragment:
 
 ```
-/app/report.html#<encrypted blob>
+app/report.html#<encrypted blob>
 ```
 
 A fragment is never sent to a web server. It does not appear in hosting logs. The

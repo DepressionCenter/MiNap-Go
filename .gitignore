@@ -28,3 +28,7 @@ Thumbs.db
 *.swp
 .claude
 .gemini
+
+# Python cache from running build.py
+__pycache__/
+*.pyc

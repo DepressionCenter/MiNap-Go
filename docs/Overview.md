@@ -3,7 +3,7 @@ This file is part of MiNap Go.
 README.md
 Author(s): Gabriel Mongefranco (@gabrielmongefranco), Abhiram V. (@abhiramvsmg)
 Created: 2026-06-25
-Last Modified: 2026-08-17
+Last Modified: 2026-08-18
 Summary: MiNap Go: a standalone, ready-to-run version of MiNap (sleep diary app for research) with no additional technology required. This file provides an overview of the project, in Markdown format.
 Notes: See README file for documentation and full license information.
 
@@ -91,7 +91,7 @@ We also welcome your feedback and suggestions for improving MiNap Go. Please [su
 
 
 ### Code maintenance notes
-+ This repository is the source of truth for the code. There is no build step or clasp project; the maintainer syncs these files into the template's bound Apps Script project by hand.
++ This repository is the source of truth for the code. `src/` is where it is written; a local `build.py` script packages it into `gas/` (what gets pasted into the template's bound Apps Script project) and `app/` (what the site serves). There is still no clasp project, no API key, and no automated deployment -- releases are hand-synced by copying `gas/` into the Apps Script project.
 + **Once deployed, the script is independent of this repository.** Changes to the code here will not affect any deployed copies of MiNap Go. To update a deployed copy, you must manually copy the new code into the bound Apps Script project and redeploy it. This ensures that each study's data remains private and secure, and that the researcher has full control over when and how to update their deployed copy of MiNap Go.
 
 ## Contact
