@@ -54,7 +54,7 @@ The one phase with real urgency.
 - **Update the existing documentation in the same change.** The README tells
   developers to copy four specific files out of `src/`; after this phase they copy
   seven files out of `gas/`, and `src/` is source that is never pasted. The code
-  maintenance note in `docs/Overview.md` says there is no build step, which stops
+  maintenance note in `docs/overview.md` says there is no build step, which stops
   being true. Both are instructions somebody will follow, so leaving them stale
   is a defect, not a tidy-up.
 - Keep the manual deployment steps in the README, aimed at developers. Researchers
@@ -73,13 +73,42 @@ path that no longer exists.
 Everything here is permanent. A deployed copy never receives an update, so a
 column added later has to be added by hand in every researcher's Sheet.
 
-**Deliverables**
+**Task 1 — the layout declaration. Done, and now needs reworking.**
 
-- The workbook layout as a declaration at the top of the server code, per section
-  3.8. One function walks it and creates what is missing: StudySettings,
-  QuestionsSetup, ParticipantsSetup, SleepDiary, EMA, Dashboard, `_calc`. It also
-  writes the live web app link into the one cell reserved for it on the README tab.
-  No tab layout written into the body of a function, and no build step involved.
+`WORKBOOK` at the top of `src/server/Code.gs` declares the tabs, their columns and
+notes, the question rows, the Dashboard filter cells, and the four fixed `_calc`
+blocks. The structure is right and stays. What it declares has changed: survey
+data is now two long tabs rather than one wide one, and question IDs are `Q01`
+onward rather than `EMA_01` onward. See section 3.6 of the specification.
+
+**Task 1a — bring the declaration in line with the revised schema**
+
+- Replace the `EMA` tab with `Surveys` and `SurveyAnswers`, per section 3.6. Drop
+  `emaAnswerColumns_` and the twenty answer columns with it.
+- Rename question IDs from `EMA_01`–`EMA_20` to `Q01`–`Q20`. Change
+  `questionId_` and the default rows together.
+- Add `required` to QuestionsSetup, defaulting to `No` on every shipped question.
+- Add `datetime` to `ANSWER_TYPES` and rename `binary` to `boolean`.
+- Point the `_calc` questions block at `SurveyAnswers` with `AVERAGEIFS` and
+  `COUNTIFS` over `question_id`, instead of at twenty answer columns.
+- Retire what the declaration replaces: `SHEET_NAME`, `SETUP_SHEET`, `HEADERS`,
+  the `SETUP_COL_*` constants, `DEFAULT_STUDY_ID`, `DEFAULT_PARTICIPANT_IDS`,
+  `ensureSetupSheet_`, and `ensureSheet_` still describe the three-column Setup tab
+  from version 0. `ensureSheet_` also calls `sh.clear()` on a header mismatch,
+  which section 3.9 forbids. Two layouts in one file is how a workbook ends up
+  with both.
+- Fix the build before anything else in this phase. `build.py` reads
+  `src/index.html`; the file is committed as `src/Index.html`. That works on a
+  case-insensitive filesystem and fails everywhere else, so `--check` cannot run
+  on Linux today. Rename the file, keep the header's own filename line in step,
+  and confirm `--check` passes.
+
+**Remaining deliverables**
+
+- One function that walks `WORKBOOK` and creates what is missing: StudySettings,
+  QuestionsSetup, ParticipantsSetup, SleepDiary, Surveys, SurveyAnswers,
+  Dashboard, `_calc`. It also writes the live web app link into the one cell
+  reserved for it on the README tab.
 - The four charts, created by the same pass using the Apps Script chart builder,
   against a `_calc` tab whose size is fixed in the declaration.
 - Provisioning that never clears a tab. It creates what is missing and stops with
@@ -87,11 +116,16 @@ column added later has to be added by hand in every researcher's Sheet.
   participant list or their charts to a header mismatch is not acceptable.
 - `sleep_day` filled in by the server for both marker types, including the lookup
   that pairs a WAKE to its SLEEP and the recompute when an edit moves a marker
-  across noon.
+  across noon. Transcribe the rule from the Sleep Data Automation exactly, in
+  local time, anchored on sleep onset. Section 4 has both forms side by side.
 - A rewritten README tab for the template Sheet. The current text describes a
   three-column Setup tab and no PIN step.
-- All twenty `EMA_` columns, even though eight are used. All QuestionsSetup columns,
-  including the ones only the standalone build reads.
+- All QuestionsSetup columns, including the ones only the standalone build reads,
+  and all twenty question rows.
+- The full timestamp set on both survey tabs: survey opened, ended, and its
+  reason, and per answer the answered time, the last edit, the edit count, and the
+  time taken. None of these can be recovered after the fact.
+- `question_text_shown` written onto every SurveyAnswers row.
 - One spelling for every yes-or-no column, per section 3.10: `Yes` and `No` written,
   and `0`/`1`, real booleans, and any casing of the words accepted on read.
 - The Consensus Sleep Diary Core questions as defaults, numbered to match the
@@ -99,6 +133,9 @@ column added later has to be added by hand in every researcher's Sheet.
   in the README.
 - Server functions: `validateLogin`, `setPin`, `verifyPin`, `getConfig`,
   `logMarker`, `logSurvey`, `updateMarker`. No function returns diary data.
+  `logSurvey` writes the Surveys row and its SurveyAnswers rows inside one lock,
+  so neither can exist without the other. It accepts a survey with no answers, and
+  records why.
 - PIN storage with a per-participant random salt, and a lockout counter.
 - `schemaVersion` in the declaration, written into StudySettings on creation and
   checked on later opens, so a Sheet built by an older version is detected rather
@@ -110,7 +147,14 @@ column added later has to be added by hand in every researcher's Sheet.
 **Done when** a copy of the template with only its README tab builds every other
 tab and all four charts on first open, a participant can be added and can set a
 PIN, a marker and a survey land in the right tabs with matching `sleep_day`
-values, and a wrong PIN locks the account after the set number of tries.
+values, a skipped survey leaves a Surveys row and no answer rows, and a wrong PIN
+locks the account after the set number of tries.
+
+**Check the sleep day rule against the automation.** Take a bedtime at 11:59,
+another at 12:01, and one at 01:30, and confirm all three land on the day the
+Power Query step in section 4 would give. This is the join key between three tabs
+and it is anchored on local time, so a UTC reading passes casual inspection and is
+wrong for every participant west of Greenwich.
 
 **Check before moving on:** ask the server for data as an unauthenticated caller
 and confirm nothing readable comes back. Try to edit another participant's row by
@@ -200,9 +244,10 @@ than as encryption.
   instructions are a defect.
 - **Accessibility is part of each phase**, not a pass at the end. Keyboard
   traversal, visible focus, 200% zoom, and a screen reader on the main flow.
-- The open questions in section 20 (or 19) of the specification should be answered before
-  the phase that depends on them. The Consensus Sleep Diary permission question
-  blocks Phase 2.
+- The open questions in section 19 of the specification should be answered before
+  the phase that depends on them. The Consensus Sleep Diary permission question no
+  longer blocks Phase 2: build on the assumption that permission is granted, since
+  only `display_text` changes if it is refused.
 
 ---
 
@@ -219,8 +264,9 @@ specification before writing anything.
 ## Additional resources
 
 - [MiNap Go architecture and version 1 specification](./architecture.md)
+- [MiNap Go data dictionary](./data-dictionary.md)
 - [Agent instructions for this repository](../AGENTS.md)
-- [MiNap Go technical overview](./Overview.md)
+- [MiNap Go technical overview](./overview.md)
 - [MiNap Go repository](https://github.com/DepressionCenter/MiNap-Go)
 
 [⬅ Back to README](../README.md)

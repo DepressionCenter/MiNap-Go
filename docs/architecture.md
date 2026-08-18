@@ -3,7 +3,7 @@ This file is part of MiNap Go
 docs/architecture.md
 Author(s): Gabriel Mongefranco
 Created: 2026-08-17
-Last Modified: 2026-08-17
+Last Modified: 2026-08-18
 Summary: Version 1 architecture specification for MiNap Go: the two build targets, the Google Sheet schema, participant authentication, dashboards, and the decisions behind them.
 Notes: See README file for documentation and full license information.
 
@@ -122,9 +122,13 @@ new landing page will send more people to it.
 
 One Sheet per deployment. It may hold more than one study.
 
-The layout below is not written into the provisioning code. It comes from a
-template of plain files that the build turns into a description the server walks.
-See section 3.8.
+The layout below is not written into the body of the provisioning code. It is a
+declaration the server walks; see section 3.8.
+
+This section says **why** each tab and column exists. [The data
+dictionary](./data-dictionary.md) says **what** every column holds, written for a
+researcher reading their own data. The declaration in `src/server/Code.gs` is the
+authority; either page disagreeing with it is a defect.
 
 ### 3.1 Tabs
 
@@ -135,7 +139,8 @@ See section 3.8.
 | ParticipantsSetup | The list of who may log in, and their PIN records | Researcher adds rows; the app writes PIN fields |
 | QuestionsSetup | The daily survey | Researcher |
 | SleepDiary | Sleep and wake markers | The app |
-| EMA | Daily survey responses | The app |
+| Surveys | One row per survey shown, whether it was answered or not | The app |
+| SurveyAnswers | One row per question shown, per survey | The app |
 | Dashboard | Four charts, and the filter that decides whose nights they show | Created by the app; driven by formulas |
 | \_calc | Hidden helper tables for the charts | Created by the app |
 
@@ -198,7 +203,7 @@ ninth, a free-text comments box, is deliberately not asked. See section 3.4.1.
 
 | Column | Notes |
 |---|---|
-| `question_id` | `EMA_01` through `EMA_20`. Fixed forever |
+| `question_id` | `Q01` through `Q20`. Fixed forever |
 | `display_text` | The wording the participant sees |
 | `answer_type` | See the table below |
 | `min_value`, `max_value` | For `scale`, `ordinal`, `count`, and `duration_minutes` |
@@ -206,6 +211,7 @@ ninth, a free-text comments box, is deliberately not asked. See section 3.4.1.
 | `min_label`, `max_label` | End labels, for example "Not at all" and "Extremely" |
 | `unit` | Stored unit, shown to anyone reading the raw data |
 | `prefill_from` | `SLEEP_MARKER`, `WAKE_MARKER`, or empty |
+| `required` | `Yes` or `No`. Defaults to `No`. A required question cannot be hidden and must be answered before the survey can be submitted |
 | `visible` | `Yes` or `No` |
 | `sort_order` | Display order |
 
@@ -213,12 +219,26 @@ Answer types:
 
 | `answer_type` | Stored as | Example |
 |---|---|---|
-| `time` | Local date and time, ISO 8601 with offset. See section 4.1 | `2026-08-16T23:30-04:00` |
+| `time` | Local date and time, ISO 8601 with offset. The participant picks a clock time; the date comes from the night. See section 4.1 | `2026-08-16T23:30-04:00` |
+| `datetime` | The same format, but the participant picks the date as well | `2026-08-14T15:00-04:00` |
 | `duration_minutes` | Whole minutes | `55` |
 | `count` | Whole number | `3` |
 | `ordinal` | Whole number, 1 upward, with fixed labels | `2` for "Poor" |
 | `scale` | Whole number between min and max | `7` |
-| `binary` | `0` or `1` | `1` |
+| `boolean` | `Yes` or `No`, per section 3.10 | `Yes` |
+
+**There is no free-text answer type, and there never will be.** Open text invites
+a participant to type names, appointments, places, or diagnoses, and all of it
+would land in the researcher's workbook as identifiable health information.
+Leaving the type out removes the risk rather than managing it. Participants who
+want to write things down use the private notes feature in section 6, which never
+leaves the device. This holds in both builds, for researcher-written and
+participant-written questions alike.
+
+`time` and `datetime` differ only in what the participant is asked to choose.
+Every question in the default set is `time`, because a sleep diary asks about
+moments inside one night and the date follows from the night. `datetime` exists
+for a question that can fall on any day, and nothing in version 1 uses it yet.
 
 ### 3.4.1 The default question set
 
@@ -226,27 +246,37 @@ Version 1 ships the Consensus Sleep Diary, Core version (Carney et al., 2012),
 which is the standard daily sleep diary used in insomnia research. Using it means
 results can be compared with other studies instead of being trapped in this tool.
 
-Question numbers match the instrument's own item numbers, so `EMA_03` is item 3.
+Question numbers match the instrument's own item numbers, so `Q03` is item 3.
 Keep it that way permanently; it makes the Sheet readable without a codebook.
 
 | ID | Item | `answer_type` | Prefilled |
 |---|---|---|---|
-| `EMA_01` | What time did you get into bed? | `time` | No |
-| `EMA_02` | What time did you try to go to sleep? | `time` | From the SLEEP marker |
-| `EMA_03` | How long did it take you to fall asleep? | `duration_minutes` | No |
-| `EMA_04` | How many times did you wake up, not counting your final awakening? | `count`, 0–10 | No |
-| `EMA_05` | In total, how long did these awakenings last? | `duration_minutes` | No |
-| `EMA_06` | What time was your final awakening? | `time` | From the WAKE marker |
-| `EMA_07` | What time did you get out of bed for the day? | `time` | No |
-| `EMA_08` | How would you rate the quality of your sleep? | `ordinal`, 1–5, Very poor to Very good | No |
+| `Q01` | What time did you get into bed? | `time` | No |
+| `Q02` | What time did you try to go to sleep? | `time` | From the SLEEP marker |
+| `Q03` | How long did it take you to fall asleep? | `duration_minutes` | No |
+| `Q04` | How many times did you wake up, not counting your final awakening? | `count`, 0–10 | No |
+| `Q05` | In total, how long did these awakenings last? | `duration_minutes` | No |
+| `Q06` | What time was your final awakening? | `time` | From the WAKE marker |
+| `Q07` | What time did you get out of bed for the day? | `time` | No |
+| `Q08` | How would you rate the quality of your sleep? | `ordinal`, 1–5, Very poor to Very good | No |
 
-`EMA_09` through `EMA_20` are empty and available to the researcher.
+`Q09` through `Q20` are empty and available to the researcher. All eight default
+questions ship with `required` set to `No`: a participant who cannot remember an
+answer should be able to submit the rest of the night rather than guess. A
+researcher who needs an item answered sets `required` themselves.
 
-Zero is a valid answer to `EMA_04`, and it has to be: a night with no awakenings is
+Zero is a valid answer to `Q04`, and it has to be: a night with no awakenings is
 both common and clinically meaningful, and it is what distinguishes an unbroken night
 from a night nobody answered for. The top of the range is a clinical judgement rather
 than a true ceiling. Past about ten awakenings, what matters is that the night was
 badly broken, not the exact count, so the app offers the top value as "10 or more".
+
+**Why `Q` and not `EMA_`.** Earlier drafts named these `EMA_01` onward, because
+the survey tab was laid out as one wide row per survey and the EMA-CleanR analysis
+script picks answer columns up by an `EMA_` prefix. Answers are now rows rather
+than columns (section 3.6), so the prefix no longer does anything and only reads
+as jargon to a researcher. Anything that needs the old shape gets it from a
+converter, not from the stored layout.
 
 **Two items from the published instrument are deliberately left out.**
 
@@ -279,8 +309,8 @@ marker after the participant has seen it.
 
 Because of this, the button labels have to be exact. **SLEEP means "I am trying
 to go to sleep now," and WAKE means "I woke up for the last time."** Getting out
-of bed is a separate, later moment, asked as item 7. If participants tap WAKE when
-they get up instead, item 6 and item 7 collapse into one and sleep efficiency is
+of bed is a separate, later moment, asked as `Q07`. If participants tap WAKE when
+they get up instead, `Q06` and `Q07` collapse into one and sleep efficiency is
 wrong for the whole study. Say this in the participant instructions, not only on
 the buttons.
 
@@ -292,9 +322,12 @@ Two safeguards, since the researcher can always edit a cell:
 
 - `questions_locked` turns on at the first survey submission. The app shows a
   clear warning if the QuestionsSetup tab is edited afterwards.
-- Every EMA row stores a `question_set_hash`: a short fingerprint of the visible
-  question IDs and their wording. If wording does change, the affected rows are
-  identifiable during analysis instead of silently mixed together.
+- Every Surveys row stores a `question_set_hash`: a short fingerprint of the
+  visible question IDs and their wording. If wording does change, the affected
+  surveys are identifiable during analysis instead of silently mixed together.
+- Every SurveyAnswers row stores the wording as it was shown, in
+  `question_text_shown`. The hash says that something changed; this says what the
+  participant actually read.
 
 ### 3.4.3 Sliders and other rating inputs
 
@@ -338,13 +371,13 @@ The standalone build has no researcher, so the person decides.
   answers already given; the charts simply stop after the last one. Turning it
   back on resumes.
 - **Add up to five questions of their own.** Each is either a yes-or-no toggle or
-  a 1-to-10 slider. They get IDs `EMA_16` through `EMA_20`, taken from the spare
-  range, so a person's own questions never collide with the standard set and an
-  exported file has the same shape in both builds.
+  a 1-to-10 slider. They get IDs `Q16` through `Q20`, taken from the spare range,
+  so a person's own questions never collide with the standard set and an exported
+  file has the same shape in both builds.
 
 The wording of a personal question is stored on the device and nowhere else. It
 travels in an export or a backup, and it is embedded in a shared report so the
-clinician reads the actual question rather than `EMA_17`. It is never sent to a
+clinician reads the actual question rather than `Q17`. It is never sent to a
 server, because in this build there is no server.
 
 Nothing here exists in the study build. A study participant cannot hide a
@@ -382,7 +415,7 @@ rather not keep it, drop it deliberately rather than by accident.
 
 ### 3.5.1 How `sleep_day` is filled in
 
-`sleep_day` is the join key between this tab and the EMA tab. Getting it right
+`sleep_day` is the join key between this tab and the Surveys tab. Getting it right
 matters more than getting it quickly, so the **server** fills it in. Not the
 client, and not a formula.
 
@@ -414,53 +447,133 @@ passes a sensible limit, so the cost does not grow with the size of the study. A
 of this happens inside the lock that already guards writes, so two devices
 submitting at once cannot interleave.
 
-The EMA tab needs no lookup: a morning diary is filled in after waking, so the
-noon rule applied to `start_datetime` names the night being reported.
+The Surveys tab needs no lookup: a morning diary is filled in after waking, so
+the noon rule applied to `survey_opened_utc` names the night being reported.
 
-### 3.6 EMA
+### 3.6 Surveys and SurveyAnswers
 
-One row per completed survey, matching the layout the EMA-CleanR analysis script
-expects.
+Survey data is stored **long**: one row per survey on `Surveys`, and one row per
+question shown on `SurveyAnswers`. Earlier drafts used a single wide tab with one
+column per question, shaped to be read directly by the EMA-CleanR analysis
+script. That shape is gone. It could not hold a per-answer timestamp without one
+column per question per timestamp, and it could not record a survey that was
+shown and declined, because a survey with no answers produced no row at all.
+
+Feeding EMA-CleanR is now a conversion rather than a storage decision: pivot
+`SurveyAnswers` on `question_id` and join `Surveys` for the start and end times.
+That converter is a separate piece of work and is not part of version 1.
+
+#### Surveys
+
+One row per survey **shown**, whether or not anything was answered.
 
 | Column | Notes |
 |---|---|
-| `participant_id` | Spelled the same way as on SleepDiary and ParticipantsSetup |
-| `surveyname` | `<STUDY_ID>_sleep_diary`, for example `STUDY1_sleep_diary` |
-| `start_datetime` | When the participant opened the survey |
-| `end_datetime` | When they submitted it |
-| `EMA_01` … `EMA_20` | One column per question, always all twenty |
-| `question_set_hash` | See section 3.4 |
-| `sleep_day` | See section 4 |
-| `study_id` | The study this survey belongs to, spelled out so the tab can be filtered and joined without taking `surveyname` apart |
-| `record_id` | Unique ID generated on the device. A resend updates this row instead of adding a second one. See section 14.1 |
-| `received_utc` | When the server accepted the row |
-| `source` | How it arrived, for example `web` |
-| `app_version` | |
+| `survey_id` | Generated on the device when the survey opens. The join key for SurveyAnswers |
+| `study_id`, `participant_id` | |
+| `sleep_day` | The night this survey describes. See section 4 |
+| `sleep_record_id` | The SLEEP marker for that night, if there was one |
+| `wake_record_id` | The WAKE marker that opened the survey |
+| `wake_marker_utc` | When WAKE was tapped |
+| `survey_opened_utc` | When the first question appeared |
+| `survey_ended_utc` | When the participant submitted or skipped. Empty if the survey was abandoned |
+| `survey_duration_ms` | Ended minus opened. Stored so the tab reads without a formula |
+| `end_reason` | `submitted`, `skipped`, or `abandoned` |
+| `question_count` | How many questions were shown |
+| `answered_count` | How many were answered |
+| `skipped_count` | The difference |
+| `edit_count_total` | How many answers were changed before submitting |
+| `question_set_hash` | See section 3.4.2 |
+| `event_tz` | The participant's zone at the time |
+| `tz_offset_minutes` | The offset in force at `survey_opened_utc` |
+| `record_id` | Same value as `survey_id`, so a resend updates this row rather than adding one |
+| `received_utc` | When the row reached the workbook |
+| `source`, `app_version` | |
 
-EMA-CleanR requires a participant column, `surveyname`, `start_datetime`, and
-`end_datetime`, and picks up questions by the `EMA_` prefix. Extra columns are
-ignored, so the trailing columns are safe.
+**`end_reason` carries the distinction the old tab could not.** `skipped` means
+the survey was shown and declined, which is a real finding about engagement.
+`abandoned` means the app closed part way through and the queue sent what
+existed, with `survey_ended_utc` empty. Without those two values, both look
+identical to data loss.
 
-Earlier drafts spelled the participant column `participantidentifier`, because that
-was the only name EMA-CleanR accepted. That deviation is gone: EMA-CleanR is being
-made tolerant of the column name instead, so this workbook uses `participant_id` on
-every tab and one column name means one thing everywhere. Any analysis written
-against the old spelling needs updating once.
+**A night with no survey row at all** means no survey was shown. That happens in
+the standalone build when the person has hidden every question, and it is
+deliberate: an empty survey is not offered, not shown, and not recorded.
 
-Putting the Study ID inside `surveyname` keeps the file usable by EMA-CleanR
-without an extra column. The `_sleep_diary` suffix leaves room for a second daily
-survey later, which matters because `surveyname` is how EMA-CleanR groups rows.
+**`tz_offset_minutes` alongside `event_tz`.** Daylight saving edges and later
+revisions to the time zone database both reinterpret history. The stored offset
+pins what the offset actually was.
 
-`sleep_day` on the EMA tab is **not** the same as EMA-CleanR's `start_day`.
-`start_day` describes when the survey was answered. `sleep_day` describes which
-night it belongs to, so sleep and survey data can be joined or charted together.
+#### SurveyAnswers
+
+One row per question **shown**, per survey. Every question shown gets a row,
+answered or not: an unanswered question is one with an empty `value` and an empty
+`answered_utc`, which is not the same as a question nobody was asked.
+
+| Column | Notes |
+|---|---|
+| `record_id` | Generated on the device |
+| `survey_id` | Join to Surveys |
+| `study_id`, `participant_id` | Repeated so this tab can be filtered on its own |
+| `question_id` | `Q01` through `Q20` |
+| `question_source` | `default`, `researcher`, or `participant` |
+| `answer_type` | As shown, from section 3.4 |
+| `question_text_shown` | The wording the participant read, copied in at the time |
+| `required` | Whether the question was required when it was shown |
+| `display_order` | Where it appeared |
+| `answer_order` | The order it was actually answered in. Empty if unanswered |
+| `value` | The answer as a person reads it |
+| `value_number` | The same answer as a single number, for analysis |
+| `value_unit` | `hh:mm`, `minutes`, `times`, `points`, or empty |
+| `answered_utc` | When the answer was first given. **Empty means shown but not answered** |
+| `edited_utc` | When it was last changed before submitting. Empty if never changed |
+| `edit_count` | How many times it was changed |
+| `time_to_answer_ms` | From the question appearing to the first answer |
+| `received_utc` | When the row reached the workbook |
+| `source`, `app_version` | |
+
+**Two value columns, on purpose.** A researcher reading the tab wants `23:30` and
+`Yes`. An analyst wants one numeric column that behaves the same way for every
+question type. Storing both costs a column and saves everyone a conversion:
+
+| `answer_type` | `value` | `value_number` | `value_unit` |
+|---|---|---|---|
+| `time` | `2026-08-16T23:30-04:00` | Minutes from local midnight | `hh:mm` |
+| `datetime` | `2026-08-14T15:00-04:00` | Minutes from local midnight | `hh:mm` |
+| `duration_minutes` | `55` | `55` | `minutes` |
+| `count` | `3` | `3` | The question's `unit` |
+| `ordinal` | `2` | `2` | `points` |
+| `scale` | `7` | `7` | `points` |
+| `boolean` | `Yes` | `1` | *(empty)* |
+
+**`question_text_shown` is the reason a mid-study wording change is survivable
+rather than silent.** `questions_locked` and `question_set_hash` between them say
+that something changed and which surveys are affected. This column says what each
+participant actually read. It costs a repeated string per answer and removes the
+worst failure this workbook can have.
+
+**`answer_order` and `time_to_answer_ms`** are ordinary data-quality signals: a
+survey answered in eight seconds, or answered strictly bottom to top, looks
+different from one filled in carefully. Neither can be recovered later, and
+neither is recorded anywhere else.
+
+**Volume.** Twenty questions across sixty nights for thirty participants is
+thirty-six thousand rows, which Google Sheets handles without difficulty. The
+long shape costs rows, which are cheap, instead of columns, which are frozen.
 
 ### 3.7 Freeze the schema now
 
 A deployed copy of MiNap Go never receives an update. Adding a column later means
 every researcher edits their own Sheet by hand. So version 1 creates every column
-it will plausibly need, including all twenty `EMA_` columns even though ten are
-shown. Empty columns cost nothing.
+it will plausibly need, and every column it creates is final.
+
+Storing answers as rows rather than columns removes most of what used to need
+freezing. A new question is a new row on QuestionsSetup and new rows on
+SurveyAnswers; no tab changes shape. QuestionsSetup still ships twenty rows and
+question IDs still stop at `Q20`, but for a different reason than before: the
+`_calc` tab holds one chart row per question slot, and a chart range is a constant
+written once (section 3.8). Twenty is a limit on how many questions can be
+charted, not on how many columns exist.
 
 ---
 
@@ -546,17 +659,33 @@ everywhere else, empty means nobody has said yet, which is not the same as no.
 ## 4. Sleep day
 
 A night that starts at 01:30 belongs to the previous calendar day. Every summary
-uses this rule, applied to the moment sleep starts:
+uses this rule, applied to the local time sleep starts:
 
 ```
-if hour(sleep_start_local) < 12:
-    sleep_day = date(sleep_start_local) - 1 day
+if local_time_of(sleep_onset) >= 12:00:
+    sleep_day = local_date_of(sleep_onset)
 else:
-    sleep_day = date(sleep_start_local)
+    sleep_day = local_date_of(sleep_onset) - 1 day
 ```
 
-This matches the convention used in the Depression Center's Fitbit sleep data
-automation, so numbers from the two tools line up.
+**This is the rule the Depression Center's Sleep Data Automation already uses**,
+transcribed from its Power Query step so that numbers from the two tools line up
+without anyone reconciling them:
+
+```
+if Time.From([SleepOnsetDateTime]) >= #time(12,00,00)
+then Date.From([SleepOnsetDateTime])
+else Date.AddDays(Date.From([SleepOnsetDateTime]), -1)
+```
+
+Two things about it are easy to get wrong and both matter:
+
+- **It reads local time, never UTC.** A participant in Detroit going to bed at
+  23:00 is already at 03:00 UTC the next day, and a UTC reading would file the
+  night under the wrong date for everyone west of Greenwich.
+- **It is anchored on sleep onset**, not on when the survey was filled in and not
+  on the wake time. That is why a WAKE marker copies its `sleep_day` from the
+  SLEEP that precedes it rather than working one out for itself (section 3.5.1).
 
 `sleep_day` is stored as a real column rather than recalculated in formulas. It
 is cheaper, and a researcher reading the Sheet can see what it means.
@@ -601,12 +730,12 @@ converts to minutes from an anchor before averaging — noon for bedtimes, midni
 for wake times — then converts back for display. That conversion is a step in a
 calculation, not a stored value.
 
-**EMA-CleanR will not handle these columns.** It is built for rating-scale items
-and will treat a timestamp as a rating. That is not a fault in the script; a
-clock time is a different kind of quantity. A researcher using EMA-CleanR should
-leave the time questions out of that analysis and use the Sheet dashboards for
-them. This is the right trade: the raw data stays true to what the participant
-said, and one downstream tool skips four columns.
+**Analysis tools built for rating scales will not handle a clock time.** A
+timestamp read as a rating produces nonsense, which is not a fault in the tool: a
+clock time is a different kind of quantity, and it runs on a circle. Anything
+consuming these answers numerically should read `value_number` from section 3.6,
+which holds minutes from local midnight for a time answer, and should average
+them the way `_calc` does rather than directly.
 
 Durations and counts (items 3, 4, and 5) are ordinary whole numbers and need none
 of this.
@@ -618,14 +747,14 @@ cannot leave old rows behind:
 
 | Measure | Formula |
 |---|---|
-| Time in bed | item 7 − item 1 |
-| Sleep onset latency | item 3 |
-| Wake after sleep onset | item 5 |
-| Total sleep time | (item 6 − item 2) − item 3 − item 5 |
+| Time in bed | `Q07` − `Q01` |
+| Sleep onset latency | `Q03` |
+| Wake after sleep onset | `Q05` |
+| Total sleep time | (`Q06` − `Q02`) − `Q03` − `Q05` |
 | Sleep efficiency | total sleep time ÷ time in bed, as a percentage |
 
 Sleep efficiency is the usual primary outcome in insomnia work, and it needs
-items 1 and 7. That is why the diary asks for getting into bed and getting out of
+`Q01` and `Q07`. That is why the diary asks for getting into bed and getting out of
 bed even though the markers already give sleep and wake times.
 
 ---
@@ -760,7 +889,7 @@ API.
 | `verifyPin` | Success, failure, or locked |
 | `getConfig` | Question list, edit window, backup reminder interval |
 | `logMarker` | Confirmation only |
-| `logSurvey` | Confirmation only |
+| `logSurvey` | Confirmation only. Writes one Surveys row and its SurveyAnswers rows in one locked operation, so a survey can never exist without its answers or the reverse |
 | `updateMarker` | Confirmation only |
 
 No function returns diary or survey data.
@@ -796,7 +925,8 @@ Plain text, opens in Excel, one file per table. Both builds.
 | File | Contents |
 |---|---|
 | `minap-sleep-<date>.csv` | The SleepDiary columns from section 3.5 |
-| `minap-surveys-<date>.csv` | The EMA columns from section 3.6 |
+| `minap-surveys-<date>.csv` | The Surveys columns from section 3.6 |
+| `minap-answers-<date>.csv` | The SurveyAnswers columns from section 3.6 |
 
 Two rules make this safe and reversible:
 
@@ -1021,7 +1151,9 @@ All four charts can be built from the safe list.
 
 Put a hidden `_calc` tab between the data and the charts. It holds one fixed table
 per chart: a 3-column criteria row, a 14-row date table, a 7-row day-of-week table,
-and a 20-row question table. Each table gets a named range, so a chart and a formula
+and a 20-row question table. The question table reads `SurveyAnswers` with
+`AVERAGEIFS` and `COUNTIFS` over `question_id`, which is what the long shape costs
+here: one criteria column instead of one column reference per question. Each table gets a named range, so a chart and a formula
 refer to `calcDaily` rather than to a row number, and the names survive the download
 to Excel. Charts point at `_calc`, never at the raw data. Clock times are stored as real times
 (section 4.1); convert them to minutes from an anchor inside `_calc` before
@@ -1394,24 +1526,24 @@ limit in section 9.2. Worth revisiting once the sharing feature has real use.
 ## 19. Still to decide
 
 - Permission to redistribute the Consensus Sleep Diary wording inside a
-  GPL-licensed tool. It is distributed freely by its authors and widely used, but
-  the exact reuse terms need confirming before the wording ships as a default.
-  Cite Carney et al. wherever the questions appear.
-- Whether the sleep specialist meant the Core version or an expanded one. Naps are
-  an expanded-version item, not a Core one, and adding them changes the question
-  set that gets frozen.
-- Whether the author list and the copyright holder recorded for the Consensus Sleep
-  Diary in section 3.4.1 and in the README match the published article exactly. Both
-  were taken from the citation, not from a rights statement.
-- How far back a missing survey may be added.
-- The exact iteration count for PIN hashing, measured against real Apps Script
-  response times rather than estimated.
-- Whether the demo spreadsheet contains only made-up data.
+  GPL-licensed tool. Requested from the authors and not yet answered. Because the
+  instrument is distributed freely for research and non-profit use, build on the
+  assumption that permission is granted and file the reply when it arrives. If it
+  is refused, only `display_text` changes: the workbook ships the question rows
+  with wording left blank and the researcher pastes it from their own licensed
+  copy. This does not block Phase 2. Cite Carney et al. wherever the questions
+  appear.
+- How far back a missing survey may be added. (Should be 7 days, same as editing history entries.)
+- How a `datetime` question is presented on a watch-sized screen. A full date and
+  time picker is the tightest control in the set at 320 pixels. Nothing in
+  version 1 uses the type, so this can wait until something does. (Can default to displaying - not storing - as two separate fields, one for date and one for time)
+- The exact iteration count for PIN hashing, measured against real Apps Script response times rather than estimated. (Should assume 100ms per hash, and be set to a total of 1 second for the whole operation)
+- Whether the demo spreadsheet contains only made-up data. (Of course! No real data!)
 - Measured payload sizes for a real 14-night report, to confirm the link and QR
-  cap in section 9.2.
+  cap in section 9.2. (Could default to summary statistics, in a very compressed hex format, rather than the full data, to reduce size).
 - Whether the bundled PDF library derives its encryption key from a secure random
   source, per section 9.4.
-- Length of the share PIN. Longer is safer, but the person has to say it out loud.
+- Length of the share PIN.(Assume 5 digits, to match the notes PIN. This is a deterrent against casual sharing, not a secure channel. If possible, we may implement the emoji+digital hybrid PIN pad from FieldStationAI, which is more memorable and less likely to be guessed by a casual observer.)
 
 ---
 
@@ -1432,13 +1564,17 @@ cannot be updated later.
 ## Additional resources
 
 - [MiNap Go repository](https://github.com/DepressionCenter/MiNap-Go)
-- [MiNap Go technical overview](./Overview.md)
+- [MiNap Go technical overview](./overview.md)
 - Carney CE, Buysse DJ, Ancoli-Israel S, Edinger JD, Krystal AD, Lichstein KL,
   Morin CM. [The consensus sleep diary: standardizing prospective sleep
   self-monitoring](https://pubmed.ncbi.nlm.nih.gov/22294820/). SLEEP
   2012;35(2):287-302. The source of the default question set
+- [MiNap Go data dictionary](./data-dictionary.md)
+- [MiNap Go version 1 implementation plan](./implementation-plan.md)
+- [Sleep Data Automation repository](https://github.com/DepressionCenter/SleepDataAutomation)
+  — the source of the `sleep_day` rule in section 4
 - [EMA-CleanR repository](https://github.com/DepressionCenter/EMA-CleanR) — the
-  survey data format used by the EMA tab
+  analysis script a future converter would target
 - [EMA-CleanR knowledge base article](https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/KB/Article/14610/EMA-CleanR-Ecological-Momentary-Assessment-EMA-Data-Processing-in-R)
 - [Sleep data automation for Fitbit](https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/KB/Article/11822/Sleep-Data-Automation-for-Fitbit-Overview) — the sleep-day rule used here
 - [MiNap, the original smartwatch sleep diary](https://teamdynamix.umich.edu/TDClient/210/DepressionCenter/KB/Article/10603/MiNap-Facilitating-Sleep-Medicine-Research-with-Smartwatch-Technology)
