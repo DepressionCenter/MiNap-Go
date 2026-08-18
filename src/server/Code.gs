@@ -25,12 +25,16 @@
  * function. Provisioning walks this structure and creates whatever is missing; nothing else
  * in the code knows a column position, so adding a column is a single edit here.
  *
+ * Every tab is a plain table: one header row, and rows of values under it. Nothing is
+ * arranged as a form, and no tab mixes two shapes, so any tab can be read, sorted, filtered,
+ * or exported without knowing anything special about it.
+ *
  * The shape of every entry:
  *
- *   schemaVersion  Stamped into Setup when the workbook is created, and checked on every
- *                  later open. A workbook built by an older version is refused, not upgraded:
- *                  a deployed copy of the app never updates itself, so there is no migration
- *                  path, and pretending otherwise would corrupt data.
+ *   schemaVersion  Stamped into StudySettings when the workbook is created, and checked on
+ *                  every later open. A workbook built by an older version is refused, not
+ *                  upgraded: a deployed copy of the app never updates itself, so there is no
+ *                  migration path, and pretending otherwise would corrupt data.
  *   tabs[]         One entry per worksheet, in the order they should appear.
  *     name         Worksheet name, exactly as it appears on the tab.
  *     purpose      One sentence for a maintainer reading this file cold.
@@ -48,20 +52,48 @@
  *                  changed them on purpose.
  *     blocks[]     Only on `_calc`: the fixed working tables the charts read. See there.
  *
- * Two things are deliberately over-provisioned. Questions always holds twenty rows, and EMA
- * always holds twenty answer columns, even though version 1 ships eight questions. Adding a
- * column after studies exist would mean every researcher editing their own workbook by hand,
- * so the space is claimed now, while it is free.
+ * Two things are deliberately over-provisioned. QuestionsSetup always holds twenty rows, and
+ * EMA always holds twenty answer columns, even though version 1 ships eight questions. Adding
+ * a column after studies exist would mean every researcher editing their own workbook by
+ * hand, so the space is claimed now, while it is free.
  */
 
-/** Layout version stamped into Setup. Raise it only for a change that makes an existing
- *  workbook unreadable, because raising it locks every workbook built before the change. */
+/** Layout version stamped into StudySettings. Raise it only for a change that makes an
+ *  existing workbook unreadable, because raising it locks every workbook built before it. */
 const SCHEMA_VERSION = 1;
 
-/** How many question rows the Questions tab always holds, and how many `EMA_` answer columns
- *  the EMA tab always holds. The two are the same number by design: one answer column per
+/** How the workbook spells a yes-or-no value. One spelling everywhere, so a researcher never
+ *  has to remember which tab wanted TRUE and which wanted YES.
+ *
+ *  Written strictly, read loosely. Everything this code writes uses exactly these two
+ *  strings, but anything reading a yes-or-no cell also accepts what a person or a spreadsheet
+ *  is likely to put there instead: 0 and 1, the booleans TRUE and FALSE, and any casing of
+ *  the words. A researcher typing "yes" into a cell must not silently mean "no". */
+const BOOL_YES = 'Yes';
+const BOOL_NO = 'No';
+
+/** How many question rows QuestionsSetup always holds, and how many `EMA_` answer columns the
+ *  EMA tab always holds. The two are the same number by design: one answer column per
  *  possible question, so a spare question can be put to use without changing the EMA tab. */
 const QUESTION_SLOT_COUNT = 20;
+
+/** Where the participant filter sits on the Dashboard tab, and what it holds. The filter is
+ *  a control, not a setting: it changes what you are looking at right now, and it belongs
+ *  beside the charts it drives rather than on a tab a researcher fills in once. The charts
+ *  start below it, so there is room to add more controls without moving them. */
+const DASHBOARD_FILTER_LABEL_CELL = { row: 1, column: 1 };
+const DASHBOARD_FILTER_CELL = { row: 1, column: 2 };
+const DASHBOARD_FILTER_LABEL = 'Show data for:';
+const DASHBOARD_FILTER_ALL = 'ALL';
+const DASHBOARD_FIRST_CHART_ROW = 3;
+
+/** Where the live web app link is written on the README tab, and what stands there until the
+ *  app has been opened once. The link is an output, not a setting, so it does not belong on a
+ *  tab a researcher fills in; it sits at the top of the first thing they read instead. */
+const README_URL_ROW = 1;
+const README_URL_COLUMN = 6;
+const README_URL_PLACEHOLDER =
+  'The URL to share with participants will appear here after publishing';
 
 /** Fixed dimensions of the hidden `_calc` tab. Chart ranges are constants written once
  *  because these never change: fourteen nights of history, seven days of the week, and one
@@ -96,52 +128,63 @@ function questionId_(n) {
 }
 
 /**
- * Builds the default contents of the Questions tab.
+ * Builds the default contents of the QuestionsSetup tab.
  *
- * The default set is the Consensus Sleep Diary, Core version (Carney et al., 2012), the
- * standard daily sleep diary in insomnia research. Using a published instrument means results
- * can be compared with other studies instead of being trapped in this tool. Question numbers
- * match the item numbers of the instrument, so `EMA_03` is item 3 and the workbook can be
- * read without a codebook. That numbering is permanent.
+ * The default set is the Consensus Sleep Diary, Core version (Carney et al., 2012), which is
+ * widely treated as the standard daily sleep diary in sleep research. Using a published
+ * instrument means results can be compared with other studies instead of being trapped in
+ * this tool. Question numbers match the item numbers of the instrument, so `EMA_03` is item 3
+ * and the workbook can be read without a codebook. That numbering is permanent.
  *
- * TODO: The wording below is provisional and must be settled before any study starts, because
- * a deployed copy of the app never updates. Permission to redistribute the Consensus Sleep
- * Diary wording inside a GPL-licensed tool is not yet confirmed with its authors, and it is
- * not yet settled whether the Core version or an expanded version is wanted. The IDs, answer
- * types, ranges, and pre-fill sources are final; only `display_text` is open.
+ * Items 2 and 6 ask for the same two moments the SLEEP and WAKE buttons already record. Both
+ * are kept and both are asked: the button records when it was pressed, the answer records
+ * what the participant says happened, and the answer opens pre-filled from the button so the
+ * usual case is one tap. Where they disagree, that disagreement is the finding, not an error.
  *
- * Two items of the published instrument are left out on purpose. The free-text comments box
- * and the medication list both invite a participant to type health information and personal
- * details into a field that lands in the researcher's spreadsheet. Participants who want to
+ * The free-text comments item of the published instrument is left out on purpose. Open text
+ * invites a participant to type names, appointments, places, or diagnoses, and every one of
+ * those would land in the researcher's spreadsheet as identifiable health information.
+ * Leaving the field out removes that risk rather than managing it. Participants who want to
  * write things down use the private notes feature, which never leaves their device.
  *
+ * TODO: The wording below is provisional and must be settled before any study starts, because
+ * a deployed copy never updates. Permission to redistribute the Consensus Sleep Diary wording
+ * inside a GPL-licensed tool is not yet confirmed with its authors, and it is not yet settled
+ * whether the Core version or an expanded version is wanted. The IDs, answer types, ranges,
+ * and pre-fill sources are final; only `display_text` is open.
+ *
  * @return {Array<Array<string|number>>} One array per question, values in the same order as
- *     the columns of the Questions tab.
+ *     the columns of the QuestionsSetup tab.
  */
 function buildQuestionDefaultRows_() {
   const rows = [
     ['EMA_01', 'What time did you get into bed?',
-      'time', '', '', '', '', '', '', '', 'YES', 1],
+      'time', '', '', '', '', '', '', '', BOOL_YES, 1],
     ['EMA_02', 'What time did you try to go to sleep?',
-      'time', '', '', '', '', '', '', 'SLEEP_MARKER', 'YES', 2],
+      'time', '', '', '', '', '', '', 'SLEEP_MARKER', BOOL_YES, 2],
     ['EMA_03', 'How long did it take you to fall asleep?',
-      'duration_minutes', 0, 600, 'stepper', '', '', 'minutes', '', 'YES', 3],
+      'duration_minutes', 0, 600, 'stepper', '', '', 'minutes', '', BOOL_YES, 3],
+    // Zero is a real and common answer, and it is what makes a night with no awakenings
+    // distinguishable from a night nobody answered for. The top of the range is a clinical
+    // judgement rather than a true ceiling: past about ten awakenings, what matters is that
+    // the night was badly broken, not the exact count, so the app offers the top value as
+    // "10 or more".
     ['EMA_04', 'How many times did you wake up, not counting your final awakening?',
-      'count', 0, 20, 'stepper', '', '', 'times', '', 'YES', 4],
+      'count', 0, 10, 'stepper', '', '', 'times', '', BOOL_YES, 4],
     ['EMA_05', 'In total, how long did these awakenings last?',
-      'duration_minutes', 0, 600, 'stepper', '', '', 'minutes', '', 'YES', 5],
+      'duration_minutes', 0, 600, 'stepper', '', '', 'minutes', '', BOOL_YES, 5],
     ['EMA_06', 'What time was your final awakening?',
-      'time', '', '', '', '', '', '', 'WAKE_MARKER', 'YES', 6],
+      'time', '', '', '', '', '', '', 'WAKE_MARKER', BOOL_YES, 6],
     ['EMA_07', 'What time did you get out of bed for the day?',
-      'time', '', '', '', '', '', '', '', 'YES', 7],
+      'time', '', '', '', '', '', '', '', BOOL_YES, 7],
     ['EMA_08', 'How would you rate the quality of your sleep?',
-      'ordinal', 1, 5, 'buttons', 'Very poor', 'Very good', '', '', 'YES', 8]
+      'ordinal', 1, 5, 'buttons', 'Very poor', 'Very good', '', '', BOOL_YES, 8]
   ];
 
   // The remaining slots ship empty and hidden. They exist so that a researcher can add a
   // question by filling in a row, rather than by adding a column to a workbook already in use.
   for (let n = rows.length + 1; n <= QUESTION_SLOT_COUNT; n++) {
-    rows.push([questionId_(n), '', '', '', '', '', '', '', '', '', 'NO', n]);
+    rows.push([questionId_(n), '', '', '', '', '', '', '', '', '', BOOL_NO, n]);
   }
   return rows;
 }
@@ -149,7 +192,7 @@ function buildQuestionDefaultRows_() {
 /**
  * The twenty `EMA_` answer columns of the EMA tab, one per question slot, always all twenty
  * whether or not the matching question is in use. EMA-CleanR picks answer columns up by their
- * `EMA_` prefix and ignores columns it does not recognise.
+ * `EMA_` prefix and ignores every column that does not carry it.
  *
  * @return {Array<Object>} Column declarations, in slot order.
  */
@@ -159,8 +202,8 @@ function emaAnswerColumns_() {
     columns.push({
       header: questionId_(n),
       width: 110,
-      note: 'Answer to question ' + questionId_(n) + ' on the Questions tab. Empty when that '
-        + 'question was not shown, or was not answered.'
+      note: 'Answer to question ' + questionId_(n) + ' on the QuestionsSetup tab. Empty when '
+        + 'that question was not shown, or was not answered.'
     });
   }
   return columns;
@@ -170,23 +213,41 @@ const WORKBOOK = {
   schemaVersion: SCHEMA_VERSION,
   tabs: [
     {
-      name: 'Setup',
-      purpose: 'Study settings: one header row, and one row of values under it.',
+      name: 'README',
+      purpose: 'How to deploy, and where to go next. The only tab the template workbook ships '
+        + 'with. The app writes the live link into it and changes nothing else.',
+      hidden: false,
+      frozenRows: 0,
+      appendOnly: false,
+      columns: [],
+      defaultRows: [],
+
+      /*
+       * The one cell the app writes on this tab: the live web app link, at the top right,
+       * where a researcher opening the workbook for the first time will see it. Until the app
+       * has been opened once, the cell explains why it is empty. Everything else on this tab
+       * is prose the researcher may reformat freely.
+       */
+      webAppUrlCell: { row: README_URL_ROW, column: README_URL_COLUMN },
+      webAppUrlPlaceholder: README_URL_PLACEHOLDER
+    },
+
+    {
+      name: 'StudySettings',
+      purpose: 'Settings that apply to the whole workbook: one header row, and one row of '
+        + 'values under it.',
       hidden: false,
       frozenRows: 1,
       appendOnly: false,
       columns: [
-        { header: 'web_app_url', width: 460,
-          note: 'The link participants use. The app fills this in the first time you open the '
-            + 'web app, so you never have to hunt for it.' },
         { header: 'schema_version', width: 120,
           note: 'Which workbook layout this is, set by the app. Do not change it. If it does '
             + 'not match the app, the app stops instead of writing into a layout it does not '
             + 'know.' },
         { header: 'questions_locked', width: 130,
-          note: 'TRUE once a participant has submitted a survey. After that, changing the '
-            + 'wording of a question makes two different questions share one column, and '
-            + 'nothing in the data can tell those answers apart later.' },
+          note: 'Yes once a participant has submitted a survey, set by the app. After that, '
+            + 'changing the wording of a question makes two different questions share one '
+            + 'column, and nothing in the data can tell those answers apart later.' },
         { header: 'questions_locked_at', width: 170,
           note: 'When the questions were locked, in UTC. Set by the app.' },
         { header: 'edit_window_days', width: 140,
@@ -194,57 +255,15 @@ const WORKBOOK = {
             + 'Counted from the time already stored, not from the new one. Default 7.' },
         { header: 'backup_reminder_days', width: 170,
           note: 'How often the app reminds a participant to export a backup, in days. '
-            + 'Default 15.' },
-        { header: 'dashboard_filter', width: 150,
-          note: 'What the Dashboard charts show: ALL for everyone, or one Participant ID to '
-            + 'look at a single person.' }
+            + 'Default 15.' }
       ],
       defaultRows: [
-        ['', SCHEMA_VERSION, 'FALSE', '', 7, 15, 'ALL']
+        [SCHEMA_VERSION, BOOL_NO, '', 7, 15]
       ]
     },
 
     {
-      name: 'Participants',
-      purpose: 'Who may log in: one row per participant per study. The researcher adds the '
-        + 'rows; the app fills in the PIN columns.',
-      hidden: false,
-      frozenRows: 1,
-      appendOnly: false,
-      columns: [
-        { header: 'study_id', width: 110,
-          note: 'Your study ID. Give it to participants at enrollment. Several studies can '
-            + 'share one workbook, because login checks the study and the participant '
-            + 'together, so an ID from one study will not work in another.' },
-        { header: 'participant_id', width: 130,
-          note: 'A randomly assigned ID. Never a name, a set of initials, a date of birth, or '
-            + 'a medical record number.' },
-        { header: 'enabled', width: 90,
-          note: 'YES or NO. Set it to NO to end access for this person while keeping their '
-            + 'data.' },
-        { header: 'pin_hash', width: 260,
-          note: 'Written by the app when the participant first sets a PIN. To reset a '
-            + 'forgotten or locked PIN, clear this cell, pin_salt, and failed_attempts. The '
-            + 'participant is then asked to choose a new PIN at the next login, and the copy '
-            + 'of their history on their own device becomes unreadable. The workbook keeps '
-            + 'the record, so nothing is lost to the study.' },
-        { header: 'pin_salt', width: 200,
-          note: 'A random value for this participant alone, written with the PIN. Clear it as '
-            + 'part of a PIN reset.' },
-        { header: 'pin_set_at', width: 170,
-          note: 'When the PIN was set, in UTC. Written by the app.' },
-        { header: 'failed_attempts', width: 130,
-          note: 'How many wrong PINs in a row. Back to zero after a correct one. Clear it as '
-            + 'part of a PIN reset.' },
-        { header: 'locked', width: 90,
-          note: 'TRUE once there have been too many wrong PINs in a row. To unlock, clear '
-            + 'pin_hash, pin_salt, and failed_attempts, which starts PIN setup again.' }
-      ],
-      defaultRows: []
-    },
-
-    {
-      name: 'Questions',
+      name: 'QuestionsSetup',
       purpose: 'The daily survey: always twenty rows, eight in use and twelve spare.',
       hidden: false,
       frozenRows: 1,
@@ -277,11 +296,50 @@ const WORKBOOK = {
             + PREFILL_SOURCES.join(' or ') + '. Leave it empty for every other question. The '
             + 'participant can change a pre-filled answer, and the marker stays as it was.' },
         { header: 'visible', width: 90,
-          note: 'YES to ask this question, NO to leave it out.' },
+          note: 'Yes to ask this question, No to leave it out.' },
         { header: 'sort_order', width: 100,
           note: 'The order questions are asked in, lowest first.' }
       ],
       defaultRows: buildQuestionDefaultRows_()
+    },
+
+    {
+      name: 'ParticipantsSetup',
+      purpose: 'Who may log in: one row per participant per study. The researcher adds the '
+        + 'rows; the app fills in the PIN columns.',
+      hidden: false,
+      frozenRows: 1,
+      appendOnly: false,
+      columns: [
+        { header: 'study_id', width: 110,
+          note: 'Your study ID. Give it to participants at enrollment. Several studies can '
+            + 'share one workbook, because login checks the study and the participant '
+            + 'together, so an ID from one study will not work in another.' },
+        { header: 'participant_id', width: 130,
+          note: 'A randomly assigned ID. Never a name, a set of initials, a date of birth, or '
+            + 'a medical record number.' },
+        { header: 'enabled', width: 90,
+          note: 'Yes or No. Set it to No to end access for this person while keeping their '
+            + 'data.' },
+        { header: 'pin_hash', width: 260,
+          note: 'Written by the app when the participant first sets a PIN. To reset a '
+            + 'forgotten or locked PIN, clear this cell, pin_salt, and failed_attempts. The '
+            + 'participant is then asked to choose a new PIN at the next login, and the copy '
+            + 'of their history on their own device becomes unreadable. The workbook keeps '
+            + 'the record, so nothing is lost to the study.' },
+        { header: 'pin_salt', width: 200,
+          note: 'A random value for this participant alone, written with the PIN. Clear it as '
+            + 'part of a PIN reset.' },
+        { header: 'pin_set_at', width: 170,
+          note: 'When the PIN was set, in UTC. Written by the app.' },
+        { header: 'failed_attempts', width: 130,
+          note: 'How many wrong PINs in a row. Back to zero after a correct one. Clear it as '
+            + 'part of a PIN reset.' },
+        { header: 'locked', width: 90,
+          note: 'Yes once there have been too many wrong PINs in a row. To unlock, clear '
+            + 'pin_hash, pin_salt, and failed_attempts, which starts PIN setup again.' }
+      ],
+      defaultRows: []
     },
 
     {
@@ -315,7 +373,7 @@ const WORKBOOK = {
             + 'after midnight counts as the previous day, so a 01:30 bedtime and the 07:00 '
             + 'wake that follows it share one value. Join to the EMA tab on this column.' },
         { header: 'edited', width: 80,
-          note: 'YES if the participant corrected the time after first recording it.' },
+          note: 'Yes if the participant corrected the time after first recording it.' },
         { header: 'modified_utc', width: 200,
           note: 'When the participant last changed the time, in UTC. Empty if never changed.' },
         { header: 'received_utc', width: 200,
@@ -338,9 +396,10 @@ const WORKBOOK = {
       frozenRows: 1,
       appendOnly: true,
       columns: [
-        { header: 'participantidentifier', width: 170,
-          note: 'Who answered. Spelled without underscores because EMA-CleanR requires that '
-            + 'exact name. The SleepDiary tab spells the same thing participant_id.' },
+        { header: 'participant_id', width: 130,
+          note: 'Who answered. Spelled the same way here as on the SleepDiary and '
+            + 'ParticipantsSetup tabs, so one column name means one thing across the whole '
+            + 'workbook.' },
         { header: 'surveyname', width: 200,
           note: 'The study ID followed by _sleep_diary, for example STUDY1_sleep_diary. '
             + 'EMA-CleanR groups rows by this column.' },
@@ -356,6 +415,9 @@ const WORKBOOK = {
         { header: 'sleep_day', width: 110,
           note: 'Which night this survey describes. Join to the SleepDiary tab on this column. '
             + 'It is not the same as the day the survey was answered.' },
+        { header: 'study_id', width: 100,
+          note: 'The study this survey belongs to, spelled out so this tab can be filtered '
+            + 'and joined without taking the study apart from surveyname.' },
         { header: 'record_id', width: 240,
           note: 'The ID the device gave this survey, so that a resend updates this row instead '
             + 'of adding a second one.' },
@@ -371,13 +433,26 @@ const WORKBOOK = {
 
     {
       name: 'Dashboard',
-      purpose: 'Four charts covering the last fourteen nights, drawn from the _calc tab. Holds '
-        + 'charts and no cell data.',
+      purpose: 'Four charts covering the last fourteen nights, drawn from the _calc tab, and '
+        + 'the filter that decides whose nights they show. No tables, and no working data.',
       hidden: false,
       frozenRows: 0,
       appendOnly: false,
       columns: [],
-      defaultRows: []
+      defaultRows: [],
+
+      /*
+       * The filter is a control the researcher changes while reading the charts, so it sits
+       * on top of them rather than on a setup tab. Charts begin below it, leaving room for
+       * further controls without any chart having to move.
+       */
+      filterLabelCell: DASHBOARD_FILTER_LABEL_CELL,
+      filterLabel: DASHBOARD_FILTER_LABEL,
+      filterCell: DASHBOARD_FILTER_CELL,
+      filterDefault: DASHBOARD_FILTER_ALL,
+      filterNote: 'Type ALL to chart everyone, or one Participant ID to chart a single '
+        + 'person. The charts update themselves.',
+      firstChartRow: DASHBOARD_FIRST_CHART_ROW
     },
 
     {
@@ -391,15 +466,18 @@ const WORKBOOK = {
       defaultRows: [],
 
       /*
-       * Every block below starts on a known row and holds a known number of rows, so each
-       * chart points at a range that is written once and never worked out again. Moving any
-       * of these numbers moves a chart range, so treat the whole set as fixed.
+       * One table per chart, each starting on a known row and holding a known number of rows,
+       * so a chart points at a range that is written once and never worked out again. Each
+       * table also gets a named range, so a formula or a chart reads `calcDaily` rather than
+       * a row number, and so the names survive a download to Excel. Moving any number here
+       * moves a chart range: treat the whole set as fixed.
        */
       blocks: [
         {
           name: 'criteria',
-          purpose: 'Turns the Dashboard filter into values the formulas below use directly, so '
-            + 'that no formula has to test whether the filter says ALL.',
+          namedRange: 'calcCriteria',
+          purpose: 'Turns the filter cell on the Dashboard tab into values the tables below '
+            + 'use directly, so that no formula has to test whether the filter says ALL.',
           headerRow: 1,
           firstDataRow: 2,
           rowCount: 1,
@@ -414,6 +492,7 @@ const WORKBOOK = {
         },
         {
           name: 'daily',
+          namedRange: 'calcDaily',
           purpose: 'One row per night for the last fourteen nights, oldest first. Feeds the '
             + 'total sleep chart and the data coverage chart.',
           headerRow: 4,
@@ -442,6 +521,7 @@ const WORKBOOK = {
         },
         {
           name: 'weekday',
+          namedRange: 'calcWeekday',
           purpose: 'One row per day of the week, averaged over the same fourteen nights. Clock '
             + 'times are held here as minutes counted from an anchor, because averaging clock '
             + 'times directly puts the average of 23:50 and 00:10 in the middle of the day. '
@@ -473,6 +553,7 @@ const WORKBOOK = {
         },
         {
           name: 'questions',
+          namedRange: 'calcQuestions',
           purpose: 'One row per question slot, averaged over the same fourteen nights. Feeds '
             + 'the survey answer chart.',
           headerRow: 29,
@@ -482,10 +563,9 @@ const WORKBOOK = {
             { header: 'question_id',
               note: 'EMA_01 through EMA_20, in order.' },
             { header: 'display_text',
-              note: 'The wording, copied from the Questions tab for the chart labels.' },
+              note: 'The wording, copied from QuestionsSetup for the chart labels.' },
             { header: 'visible',
-              note: 'YES or NO, copied from the Questions tab. Hidden questions are not '
-                + 'charted.' },
+              note: 'Yes or No, copied from QuestionsSetup. Hidden questions are not charted.' },
             { header: 'average_value',
               note: 'Average answer over the fourteen nights. Empty for a time question, which '
                 + 'is not averaged this way.' },

@@ -76,9 +76,10 @@ column added later has to be added by hand in every researcher's Sheet.
 **Deliverables**
 
 - The workbook layout as a declaration at the top of the server code, per section
-  3.8. One function walks it and creates what is missing: Setup, Participants,
-  Questions, SleepDiary, EMA, Dashboard, `_calc`. No tab layout written into the
-  body of a function, and no build step involved.
+  3.8. One function walks it and creates what is missing: StudySettings,
+  QuestionsSetup, ParticipantsSetup, SleepDiary, EMA, Dashboard, `_calc`. It also
+  writes the live web app link into the one cell reserved for it on the README tab.
+  No tab layout written into the body of a function, and no build step involved.
 - The four charts, created by the same pass using the Apps Script chart builder,
   against a `_calc` tab whose size is fixed in the declaration.
 - Provisioning that never clears a tab. It creates what is missing and stops with
@@ -89,16 +90,19 @@ column added later has to be added by hand in every researcher's Sheet.
   across noon.
 - A rewritten README tab for the template Sheet. The current text describes a
   three-column Setup tab and no PIN step.
-- All twenty `EMA_` columns, even though eight are used. All Questions columns,
+- All twenty `EMA_` columns, even though eight are used. All QuestionsSetup columns,
   including the ones only the standalone build reads.
+- One spelling for every yes-or-no column, per section 3.10: `Yes` and `No` written,
+  and `0`/`1`, real booleans, and any casing of the words accepted on read.
 - The Consensus Sleep Diary Core questions as defaults, numbered to match the
-  instrument.
+  instrument, with the free-text comments item left out and the instrument credited
+  in the README.
 - Server functions: `validateLogin`, `setPin`, `verifyPin`, `getConfig`,
   `logMarker`, `logSurvey`, `updateMarker`. No function returns diary data.
 - PIN storage with a per-participant random salt, and a lockout counter.
-- `schemaVersion` in the declaration, written into Setup on creation and checked on
-  later opens, so a Sheet built by an older version is detected rather than
-  silently written to.
+- `schemaVersion` in the declaration, written into StudySettings on creation and
+  checked on later opens, so a Sheet built by an older version is detected rather
+  than silently written to.
 - Documentation updated with the tabs, the columns, and what a researcher edits by
   hand. A manual deployment into a blank Sheet now gets everything, charts
   included, so the developer route and the template route end in the same place.

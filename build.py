@@ -239,9 +239,11 @@ def build_app():
                                   'client, merged from src/ui/.',
                                   'src/ui/')
 
+    # manifest.json carries its own notice in a leading "_license" key. The Web App Manifest
+    # specification tells browsers to ignore members they do not recognise, so the key is
+    # harmless. appsscript.json cannot do the same: Apps Script validates that file against a
+    # fixed schema and rejects keys it does not know, so its notice stays in a sibling file.
     out['manifest.json'] = read(SRC / 'manifest.json')
-    out['manifest.json.LICENSE.txt'] = license_sibling(
-        SRC / 'manifest.json.LICENSE.txt', 'src/manifest.json.LICENSE.txt')
 
     out['sw.js'] = build_service_worker(sorted(out.keys()))
 

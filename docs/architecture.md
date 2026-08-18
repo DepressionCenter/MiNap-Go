@@ -130,13 +130,13 @@ See section 3.8.
 
 | Tab | What it holds | Who writes it |
 |---|---|---|
-| README | How to deploy, and where to go next | The only tab the template Sheet ships with |
-| Setup | Study settings, schema version, the shareable URL, the dashboard filter | The app writes the URL; the researcher fills the rest |
-| Participants | The list of who may log in, and their PIN records | Researcher adds rows; the app writes PIN fields |
-| Questions | The daily survey | Researcher |
+| README | How to deploy, where to go next, and the link to share with participants | The only tab the template Sheet ships with. The app writes the link into one cell and changes nothing else |
+| StudySettings | Schema version, the edit window, the backup reminder, the question lock | The app writes the version and the lock; the researcher fills the rest |
+| ParticipantsSetup | The list of who may log in, and their PIN records | Researcher adds rows; the app writes PIN fields |
+| QuestionsSetup | The daily survey | Researcher |
 | SleepDiary | Sleep and wake markers | The app |
 | EMA | Daily survey responses | The app |
-| Dashboard | Four charts | Created by the app; driven by formulas |
+| Dashboard | Four charts, and the filter that decides whose nights they show | Created by the app; driven by formulas |
 | \_calc | Hidden helper tables for the charts | Created by the app |
 
 Only README exists before deployment. Everything else appears the first time the
@@ -145,18 +145,33 @@ researcher opens their web app. See section 3.8.
 The README tab in the template needs rewriting for version 1: the current text
 describes a Setup tab with three columns and no PIN step, which stops being true.
 
-### 3.2 Setup
+Every tab is a plain table: one header row, then rows of values. No tab is laid out
+as a form, and none mixes two shapes, so any tab can be read, sorted, filtered, or
+exported without knowing anything special about it.
+
+The link to the deployed web app is the one exception to "the app never touches the
+README tab". It is an output, not a setting, so it does not belong on a tab the
+researcher fills in. It goes in a single cell at the top right of the README, which
+reads `The URL to share with participants will appear here after publishing` until
+the app has been opened once.
+
+### 3.2 StudySettings
+
+One header row, one row of values.
 
 | Field | Notes |
 |---|---|
 | `schema_version` | Set by the app. Lets a future version detect an old Sheet and refuse to write to it |
-| `questions_locked` | Set to `TRUE` automatically on the first survey submission |
+| `questions_locked` | Set to `Yes` automatically on the first survey submission |
 | `questions_locked_at` | Timestamp of the above |
 | `edit_window_days` | Defaults to 7 |
 | `backup_reminder_days` | Defaults to 15 |
-| `dashboard_filter` | `ALL`, or a single Participant ID |
 
-### 3.3 Participants
+The participant filter is not here. It is a control rather than a setting: it changes
+what you are looking at right now, so it lives on the Dashboard tab, above the charts
+it drives. See section 11.
+
+### 3.3 ParticipantsSetup
 
 One row per participant per study.
 
@@ -164,21 +179,22 @@ One row per participant per study.
 |---|---|
 | `study_id` | Researcher-set |
 | `participant_id` | Randomly assigned, never a name or a medical record number |
-| `enabled` | `YES` or `NO`. Set to `NO` to revoke access without deleting data |
+| `enabled` | `Yes` or `No`. Set to `No` to revoke access without deleting data |
 | `pin_hash` | Written by the app when the participant first sets a PIN |
 | `pin_salt` | Random, one per participant |
 | `pin_set_at` | Timestamp |
 | `failed_attempts` | Counter, reset on a correct PIN |
-| `locked` | `TRUE` after too many failures |
+| `locked` | `Yes` after too many failures |
 
 Multiple studies live in one Sheet by putting different values in `study_id`. A
 Participant ID leaked from one study cannot be used in another, because login
 checks the pair.
 
-### 3.4 Questions
+### 3.4 QuestionsSetup
 
-Twenty rows, always present. The first ten hold the recommended sleep questions;
-the rest are spare.
+Twenty rows, always present. The first eight hold the Consensus Sleep Diary Core
+items that MiNap Go asks; the rest are spare. The instrument has nine items, and the
+ninth, a free-text comments box, is deliberately not asked. See section 3.4.1.
 
 | Column | Notes |
 |---|---|
@@ -190,7 +206,7 @@ the rest are spare.
 | `min_label`, `max_label` | End labels, for example "Not at all" and "Extremely" |
 | `unit` | Stored unit, shown to anyone reading the raw data |
 | `prefill_from` | `SLEEP_MARKER`, `WAKE_MARKER`, or empty |
-| `visible` | `YES` or `NO` |
+| `visible` | `Yes` or `No` |
 | `sort_order` | Display order |
 
 Answer types:
@@ -218,7 +234,7 @@ Keep it that way permanently; it makes the Sheet readable without a codebook.
 | `EMA_01` | What time did you get into bed? | `time` | No |
 | `EMA_02` | What time did you try to go to sleep? | `time` | From the SLEEP marker |
 | `EMA_03` | How long did it take you to fall asleep? | `duration_minutes` | No |
-| `EMA_04` | How many times did you wake up, not counting your final awakening? | `count` | No |
+| `EMA_04` | How many times did you wake up, not counting your final awakening? | `count`, 0–10 | No |
 | `EMA_05` | In total, how long did these awakenings last? | `duration_minutes` | No |
 | `EMA_06` | What time was your final awakening? | `time` | From the WAKE marker |
 | `EMA_07` | What time did you get out of bed for the day? | `time` | No |
@@ -226,15 +242,28 @@ Keep it that way permanently; it makes the Sheet readable without a codebook.
 
 `EMA_09` through `EMA_20` are empty and available to the researcher.
 
+Zero is a valid answer to `EMA_04`, and it has to be: a night with no awakenings is
+both common and clinically meaningful, and it is what distinguishes an unbroken night
+from a night nobody answered for. The top of the range is a clinical judgement rather
+than a true ceiling. Past about ten awakenings, what matters is that the night was
+badly broken, not the exact count, so the app offers the top value as "10 or more".
+
 **Two items from the published instrument are deliberately left out.**
 
 - The free-text comments box. Participants type identifying details into open
   fields — names, appointments, places, diagnoses — and every one of those would
-  land in the researcher's Sheet. Leaving it out removes the risk rather than
-  managing it. Participants who want to write things down have the private notes
-  feature in section 6, which never leaves the device.
+  be transmitted to and recorded in the researcher's Sheet. Leaving it out removes
+  the risk rather than managing it. Participants who want to write things down have
+  the private notes feature in section 6, which never leaves the device.
 - The medication question from the expanded versions, for the same reason: it asks
   for a written list, and medication is health information.
+
+**Credit the instrument wherever the questions appear.** Carney CE, Buysse DJ,
+Ancoli-Israel S, Edinger JD, Krystal AD, Lichstein KL, Morin CM. The Consensus Sleep
+Diary: Standardizing Prospective Sleep Self-Monitoring. *Sleep.* 2012;35(2):287–302.
+DOI 10.5665/sleep.1642. Copyright © 2012 Associated Professional Sleep Societies,
+LLC. The project README carries the same credit, along with the reason the free-text
+item is omitted.
 
 ### 3.4.2 Prefilled answers, and why both copies are kept
 
@@ -262,7 +291,7 @@ different questions sharing one column, and no way to tell the rows apart later.
 Two safeguards, since the researcher can always edit a cell:
 
 - `questions_locked` turns on at the first survey submission. The app shows a
-  clear warning if the Questions tab is edited afterwards.
+  clear warning if the QuestionsSetup tab is edited afterwards.
 - Every EMA row stores a `question_set_hash`: a short fingerprint of the visible
   question IDs and their wording. If wording does change, the affected rows are
   identifiable during analysis instead of silently mixed together.
@@ -334,7 +363,7 @@ One row per marker.
 | `event_tz` | IANA zone name, for example `America/Detroit` |
 | `event_utc` | ISO 8601 in UTC. The one unambiguous instant |
 | `sleep_day` | The night this marker belongs to. See section 3.5.1 |
-| `edited` | `YES` or `NO` |
+| `edited` | `Yes` or `No` |
 | `modified_utc` | When the participant last changed the time. Empty if never edited |
 | `received_utc` | When the server accepted the row |
 | `source` | How it arrived, for example `web` |
@@ -395,17 +424,28 @@ expects.
 
 | Column | Notes |
 |---|---|
-| `participantidentifier` | Spelled this way for EMA-CleanR. Note it differs from `participant_id` in SleepDiary |
+| `participant_id` | Spelled the same way as on SleepDiary and ParticipantsSetup |
 | `surveyname` | `<STUDY_ID>_sleep_diary`, for example `STUDY1_sleep_diary` |
 | `start_datetime` | When the participant opened the survey |
 | `end_datetime` | When they submitted it |
 | `EMA_01` … `EMA_20` | One column per question, always all twenty |
 | `question_set_hash` | See section 3.4 |
 | `sleep_day` | See section 4 |
+| `study_id` | The study this survey belongs to, spelled out so the tab can be filtered and joined without taking `surveyname` apart |
+| `record_id` | Unique ID generated on the device. A resend updates this row instead of adding a second one. See section 14.1 |
+| `received_utc` | When the server accepted the row |
+| `source` | How it arrived, for example `web` |
+| `app_version` | |
 
-EMA-CleanR requires only `participantidentifier`, `surveyname`,
-`start_datetime`, and `end_datetime`, and picks up questions by the `EMA_`
-prefix. Extra columns are ignored, so the trailing columns are safe.
+EMA-CleanR requires a participant column, `surveyname`, `start_datetime`, and
+`end_datetime`, and picks up questions by the `EMA_` prefix. Extra columns are
+ignored, so the trailing columns are safe.
+
+Earlier drafts spelled the participant column `participantidentifier`, because that
+was the only name EMA-CleanR accepted. That deviation is gone: EMA-CleanR is being
+made tolerant of the column name instead, so this workbook uses `participant_id` on
+every tab and one column name means one thing everywhere. Any analysis written
+against the old spelling needs updating once.
 
 Putting the Study ID inside `surveyname` keeps the file usable by EMA-CleanR
 without an extra column. The `_sleep_diary` suffix leaves room for a second daily
@@ -439,15 +479,21 @@ function:
 const WORKBOOK = {
   schemaVersion: 1,
   tabs: [
-    { name: 'Setup', frozenRows: 1, columns: [
-        { header: 'Active Study ID', width: 140,
-          note: 'Your study ID. Give this to participants at enrollment.',
-          defaults: ['STUDY1'] }
-      ]
+    { name: 'StudySettings', frozenRows: 1,
+      columns: [
+        { header: 'edit_window_days', width: 140,
+          note: 'How many days a participant may go back and correct a sleep or wake time.' }
+      ],
+      defaultRows: [[7]]
     }
   ]
 };
 ```
+
+Default values are declared a row at a time rather than a column at a time. The
+QuestionsSetup tab ships twenty rows across twelve columns, and twelve parallel
+twenty-element arrays would be unreadable, which defeats the point of putting the
+layout in one place you can read.
 
 One function walks it and builds what is missing. Adding a column is one line, in
 one file, and it shows up plainly in a code review.
@@ -467,14 +513,33 @@ recalculating.
 
 The current code wipes a tab when its headers do not match what it expects. That
 was survivable when a tab held nothing but appended rows. It is not survivable
-now: Setup holds participant IDs and PIN records typed by a researcher, and the
-Dashboard holds charts.
+now: ParticipantsSetup holds participant IDs and PIN records typed by a researcher,
+and the Dashboard holds charts.
 
 Provisioning creates what is missing and leaves everything else alone. If it finds
 a tab whose shape it does not recognise, it stops and says so rather than
-repairing by deletion. `schemaVersion` is written into Setup on creation and
+repairing by deletion. `schemaVersion` is written into StudySettings on creation and
 checked on later opens, so a Sheet built by an older version is detected instead
 of silently written to.
+
+---
+
+### 3.10 One spelling for yes and no
+
+Every yes-or-no column in the workbook uses `Yes` and `No`. One spelling everywhere,
+so a researcher never has to remember which tab wanted `TRUE` and which wanted `YES`.
+
+**Written strictly, read loosely.** Everything the app writes uses exactly those two
+words. Everything that reads a yes-or-no cell also accepts what a person or a
+spreadsheet is likely to leave there instead:
+
+- `0` and `1`
+- the booleans `TRUE` and `FALSE`, as Sheets stores them
+- the words `yes`, `no`, `true`, and `false` in any casing
+
+A researcher typing `yes` into a cell must not silently mean no. An empty cell is
+treated as `No` only when the app is recording an answer to a required question;
+everywhere else, empty means nobody has said yet, which is not the same as no.
 
 ---
 
@@ -572,7 +637,7 @@ anything against.
 
 ### 5.1 Setting a PIN
 
-The researcher adds a Participant ID to the Participants tab. Nothing else.
+The researcher adds a Participant ID to the ParticipantsSetup tab. Nothing else.
 
 The first time that participant logs in, the app finds no PIN on file and asks
 them to choose one. It saves a random salt and a hash. Every later login checks
@@ -896,7 +961,7 @@ channel.
 | Survey answers | Never editable |
 | Missing survey | May be added as a whole survey. Individual answers cannot be filled in later |
 
-Seven days is the default, set as `edit_window_days` in Setup so a study can
+Seven days is the default, set as `edit_window_days` in StudySettings so a study can
 choose differently. Measuring from the stored time rather than the proposed one
 stops somebody walking an entry backwards a week at a time.
 
@@ -921,8 +986,10 @@ weeks the night before their final visit.
 
 ## 11. Researcher dashboards, in the Sheet
 
-Four charts on a Dashboard tab, driven by a single filter cell in Setup holding
-either `ALL` or one Participant ID.
+Four charts on a Dashboard tab, driven by a filter cell at the top left of that same
+tab holding either `ALL` or one Participant ID. The tab holds the filter and the four
+charts and nothing else: no tables, and no working data. Charts start below the filter
+so there is room for further controls without moving them.
 
 1. Total sleep per day, last 14 days
 2. Average, earliest, and latest sleep and wake times by day of week, last 14 days
@@ -952,9 +1019,11 @@ All four charts can be built from the safe list.
 
 ### How to build them
 
-Put a hidden `_calc` tab between the data and the charts. It holds a fixed
-14-row date list, a fixed 20-row question list, and the aggregate formulas. Charts
-point at `_calc`, never at the raw data. Clock times are stored as real times
+Put a hidden `_calc` tab between the data and the charts. It holds one fixed table
+per chart: a 3-column criteria row, a 14-row date table, a 7-row day-of-week table,
+and a 20-row question table. Each table gets a named range, so a chart and a formula
+refer to `calcDaily` rather than to a row number, and the names survive the download
+to Excel. Charts point at `_calc`, never at the raw data. Clock times are stored as real times
 (section 4.1); convert them to minutes from an anchor inside `_calc` before
 averaging, then convert back for the axis labels.
 
@@ -1093,7 +1162,7 @@ which they choose to do; running studies are never changed underneath them.
 
 ## 15. How each person uses it
 
-**Researcher.** Copy the template Sheet. Fill in the Setup tab and the
+**Researcher.** Copy the template Sheet. Fill in the setup tabs and the
 participant list. Deploy the web app and open it once so the URL is recorded.
 Share the URL and each person's Study ID and Participant ID at enrollment, and
 have them set their PIN while you are there. Watch the data arrive in the Sheet
@@ -1331,6 +1400,9 @@ limit in section 9.2. Worth revisiting once the sharing feature has real use.
 - Whether the sleep specialist meant the Core version or an expanded one. Naps are
   an expanded-version item, not a Core one, and adding them changes the question
   set that gets frozen.
+- Whether the author list and the copyright holder recorded for the Consensus Sleep
+  Diary in section 3.4.1 and in the README match the published article exactly. Both
+  were taken from the citation, not from a rights statement.
 - How far back a missing survey may be added.
 - The exact iteration count for PIN hashing, measured against real Apps Script
   response times rather than estimated.

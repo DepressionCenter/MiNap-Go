@@ -99,6 +99,8 @@ If you need assistance identifying a contact person, email the EFDC's Mobile Tec
 #### This work is based in part on the following projects, libraries and/or studies:
 + [MiNap](https://github.com/DepressionCenter/MiNap) - MiNap Go is a browser-based, standalone edition of the MiNap smartwatch sleep diary.
 + [Google Apps Script](https://developers.google.com/apps-script) - MiNap Go is built entirely on Google Apps Script, a cloud-based scripting platform for light-weight application development in the G Suite platform.
++ [The Consensus Sleep Diary: Standardizing Prospective Sleep Self-Monitoring](https://pmc.ncbi.nlm.nih.gov/articles/PMC3250369/) - The daily survey MiNap Go ships with is the Consensus Sleep Diary, Core version. It is widely considered the gold standard sleep diary in sleep research, so results collected with MiNap Go can be compared with other studies instead of being trapped in this tool. Carney CE, Buysse DJ, Ancoli-Israel S, Edinger JD, Krystal AD, Lichstein KL, Morin CM. *Sleep.* 2012;35(2):287-302. DOI: [10.5665/sleep.1642](https://doi.org/10.5665/sleep.1642). Copyright © 2012 Associated Professional Sleep Societies, LLC.
+  + **One item is left out on purpose.** The instrument ends with a free-text comments box. Open text invites a participant to type names, appointments, places, or diagnoses, and anything typed there would be transmitted to and recorded in the researcher's dataset as identifiable health information. MiNap Go omits that item so the risk does not arise. Every other Core item is asked as published.
 
 
 ## License
