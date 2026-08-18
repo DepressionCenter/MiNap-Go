@@ -3,7 +3,7 @@ This file is part of MiNap Go
 docs/implementation-plan.md
 Author(s): Gabriel Mongefranco
 Created: 2026-08-17
-Last Modified: 2026-08-17
+Last Modified: 2026-08-18
 Summary: Five-phase build plan for MiNap Go version 1, with what each phase delivers and how to tell it is finished.
 Notes: See README file for documentation and full license information.
 
@@ -130,6 +130,12 @@ One core, running in both builds.
 - The seven-day edit window for markers; add-missing-only for surveys.
 - The offline queue, and the rule that a rejected ID is never retried.
 - Times stored as real local times with an offset.
+- Fix `.btn-primary`'s contrast in `styles.css`. White text on its
+  violet-to-indigo gradient measures about 4.27:1 at the violet end -- under the
+  4.5:1 AA threshold that applies here, since the button's 16px bold label is
+  normal text, not large text. Used by the login "Start" button and the edit-time
+  "Save" button. The landing page's equivalent button already uses a solid color
+  instead of this gradient for the same reason; carry that fix into the app.
 
 **Done when** a participant can log a night end to end, offline and online, on a
 phone, and the values in the Sheet match what they typed.

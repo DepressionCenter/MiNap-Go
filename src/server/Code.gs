@@ -45,9 +45,9 @@ function doGet(e) {
     .addMetaTag('viewport', 'width=device-width, initial-scale=1, maximum-scale=1');
 
   // Only relax framing protection when the request opts in. This flag isn't a secret (it's
-  // public in source control) so it's not a real barrier against a targeted attacker -- the
-  // client-side referrer check in Index.html is what actually restricts embedding to the
-  // approved demo page. This just keeps the bare URL from being framable by default.
+  // public in source control), so anyone who wants to frame the bare URL can just add it --
+  // it stops nobody determined. Its only real effect is that the bare URL is not framable
+  // by default; embedding is not otherwise restricted to any particular page.
   var allowEmbed = e && e.parameter && e.parameter.allowEmbed === 'true';
   if (allowEmbed) {
     output.setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);

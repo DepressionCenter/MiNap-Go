@@ -254,8 +254,8 @@ SW_MODIFIED = '2026-08-18'
 
 
 def build_service_worker(app_file_names):
-    # app_file_names isn't used yet. It's threaded through now so a later phase can derive a
-    # hash-based cache name and a precache list from the actual packaged app/ files without
+    # app_file_names isn't used yet. It's threaded through now so a hash-based cache name and
+    # a precache list can be derived from the actual packaged app/ files later, without
     # changing this function's signature (architecture.md §16.3).
     # TODO: add install/activate caching once the standalone build is wired to install at all.
     header = synth_header(

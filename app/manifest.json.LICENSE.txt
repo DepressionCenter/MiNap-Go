@@ -6,8 +6,7 @@ manifest.json
 Author(s): Gabriel Mongefranco
 Created: 2026-08-18
 Last Modified: 2026-08-18
-Summary: Web app manifest placeholder for the standalone build. Not yet linked from
-  app/index.html -- icons and install behavior are not wired up this phase.
+Summary: Web app manifest placeholder for the standalone build.
 Notes: See README file for documentation and full license information.
 
 Copyright © 2026 The Regents of the University of Michigan
