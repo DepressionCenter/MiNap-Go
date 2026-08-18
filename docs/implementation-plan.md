@@ -190,7 +190,7 @@ than as encryption.
   instructions are a defect.
 - **Accessibility is part of each phase**, not a pass at the end. Keyboard
   traversal, visible focus, 200% zoom, and a screen reader on the main flow.
-- The open questions in section 20 of the specification should be answered before
+- The open questions in section 20 (or 19) of the specification should be answered before
   the phase that depends on them. The Consensus Sleep Diary permission question
   blocks Phase 2.
 
