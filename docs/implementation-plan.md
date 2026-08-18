@@ -156,10 +156,6 @@ Power Query step in section 4 would give. This is the join key between three tab
 and it is anchored on local time, so a UTC reading passes casual inspection and is
 wrong for every participant west of Greenwich.
 
-**Check before moving on:** ask the server for data as an unauthenticated caller
-and confirm nothing readable comes back. Try to edit another participant's row by
-guessing a record ID and confirm it is refused. Run provisioning twice against a
-Sheet holding typed-in participant IDs and confirm nothing was lost.
 
 ---
 
@@ -253,13 +249,7 @@ than as encryption.
 
 ## Conclusion
 
-Phase 1 is the only one with a deadline, because the current deployment exposes
-participant data. After that the order protects you from rework: the data shape
-is settled before anything reads it, and the shared behavior is built before the
-parts that only one build has.
-
-Start with the Phase 1 prompt in the repository root, and read the architecture
-specification before writing anything.
+Phase 1 is high priority, and now completed. Phase 2 needs task 1a, also high priority, as it brings the schema into alignment with changes decided after the original plan had already started.
 
 ## Additional resources
 
