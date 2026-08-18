@@ -1,5 +1,5 @@
 {
-  "_todo": "Add an icons array and an explicit relative scope before app/index.html links to this manifest. A manifest whose scope does not cover the page linking it fails to install silently, with no console error. Also add publisher (Eisenberg Family Depression Center) and copyright + license if possible.",
+  "_todo": "Add an icons array and an explicit relative scope before app/index.html links to this manifest. A manifest whose scope does not cover the page linking it fails to install silently, with no console error.",
   "name": "MiNap Go",
   "short_name": "MiNap Go",
   "start_url": "index.html",
