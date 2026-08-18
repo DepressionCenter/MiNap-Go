@@ -26,7 +26,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MiNap Go</title>
+<title>MiNap Go | Smart & Simple Sleep Tracker</title>
 <style>
   :root {
     --indigo: #4c4b8a;
@@ -48,203 +48,482 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
     min-height: 100%;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     color: var(--ink);
-    background: linear-gradient(160deg, #2e2c5c 0%, #4c4b8a 45%, #b9a7e8 100%);
+    background: linear-gradient(160deg, #1a1936 0%, #2e2c5c 40%, #4c4b8a 100%);
     background-attachment: fixed;
     -webkit-font-smoothing: antialiased;
     line-height: 1.6;
+    scroll-behavior: smooth;
+    overflow-x: hidden;
   }
 
-  body { padding: 0 0 40px; }
+  body { padding: 0 0 60px; }
 
-  a { color: var(--indigo); }
+  a { color: var(--indigo); transition: color 0.2s ease; }
   a:focus-visible, button:focus-visible {
     outline: 3px solid var(--amber);
     outline-offset: 2px;
   }
 
   .wrap {
-    max-width: 880px;
+    max-width: 1080px; /* Slightly wider to accommodate the new lists comfortably */
     margin: 0 auto;
     padding: 0 20px;
+    position: relative;
+    z-index: 10;
   }
 
-  /* Hero: kept short and near the top of the page, where the background gradient is
-     darkest, so the light text here stays comfortably above 4.5:1 contrast without
-     needing its own solid background. */
+  /* --- Keyframe Animations --- */
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(30px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes float {
+    0% { transform: translateY(0px); }
+    50% { transform: translateY(-12px); }
+    100% { transform: translateY(0px); }
+  }
+  @keyframes twinkle {
+    0%, 100% { opacity: 0.3; transform: scale(0.8); }
+    50% { opacity: 1; transform: scale(1.2); }
+  }
+  @keyframes drift {
+    from { transform: translateX(-20px); opacity: 0; }
+    50% { opacity: 0.8; }
+    to { transform: translateX(20px); opacity: 0; }
+  }
+
+  .animate-up {
+    animation: fadeInUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    opacity: 0;
+  }
+  .delay-1 { animation-delay: 0.15s; }
+  .delay-2 { animation-delay: 0.3s; }
+  .delay-3 { animation-delay: 0.45s; }
+
+  /* --- Hero Section --- */
   header.hero {
-    padding: 28px 0 40px;
+    padding: 30px 0 60px;
     color: #fff;
     text-align: center;
+    position: relative;
   }
+
+  /* Animated Hero Background Elements */
+  .hero-bg {
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    overflow: hidden;
+    z-index: 0;
+    pointer-events: none;
+  }
+  .star {
+    position: absolute;
+    background: #fff;
+    border-radius: 50%;
+    animation: twinkle infinite ease-in-out;
+  }
+
+  /* Hero Graphic */
+  .hero-graphic {
+    width: 100%;
+    max-width: 320px;
+    margin: 0 auto 20px;
+    animation: float 6s ease-in-out infinite;
+    position: relative;
+  }
+  
+  .zzz {
+    position: absolute;
+    font-weight: 800;
+    color: var(--amber);
+    font-size: 24px;
+    animation: drift 4s linear infinite;
+    opacity: 0;
+  }
+  .z1 { top: 10%; right: 20%; animation-delay: 0s; font-size: 20px; }
+  .z2 { top: 0%; right: 10%; animation-delay: 1.3s; font-size: 28px; }
+  .z3 { top: -15%; right: 0%; animation-delay: 2.6s; font-size: 34px; }
 
   nav.primary-nav {
     display: flex;
     justify-content: center;
-    gap: 20px;
+    gap: 28px;
     flex-wrap: wrap;
-    margin-bottom: 28px;
-    font-size: 14px;
+    margin-bottom: 20px;
+    font-size: 15px;
     font-weight: 600;
+    position: relative;
+    z-index: 10;
   }
   nav.primary-nav a {
-    color: #fff;
+    color: rgba(255, 255, 255, 0.85);
     text-decoration: none;
     padding: 6px 4px;
-    border-bottom: 2px solid transparent;
+    position: relative;
   }
-  nav.primary-nav a:hover, nav.primary-nav a:focus-visible {
-    border-bottom-color: var(--amber);
+  nav.primary-nav a::after {
+    content: '';
+    position: absolute;
+    width: 0;
+    height: 2px;
+    bottom: 0;
+    left: 0;
+    background-color: var(--amber);
+    transition: width 0.3s ease;
   }
+  nav.primary-nav a:hover, nav.primary-nav a:focus-visible { color: #fff; }
+  nav.primary-nav a:hover::after { width: 100%; }
 
-  .brand-glyph { font-size: 44px; line-height: 1; }
-  header.hero h1 { margin: 10px 0 8px; font-size: 34px; letter-spacing: 0.5px; }
+  header.hero h1 { 
+    margin: 0 0 16px; 
+    font-size: 52px; 
+    letter-spacing: -1px; 
+    font-weight: 800;
+    text-shadow: 0 4px 12px rgba(0,0,0,0.2);
+  }
   header.hero .tagline {
-    margin: 0 auto 26px;
-    max-width: 46ch;
+    margin: 0 auto 40px;
+    max-width: 66ch;
     color: #e7e4fa;
-    font-size: 16px;
+    font-size: 19px;
+    line-height: 1.6;
+    font-weight: 400;
   }
 
+  /* --- Buttons --- */
   .btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 12px;
     font-size: 16px;
     font-weight: 700;
-    padding: 14px 28px;
+    padding: 16px 32px;
     border-radius: 999px;
     text-decoration: none;
-    min-height: 44px;
+    min-height: 56px;
     border: none;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    cursor: pointer;
   }
+  .btn svg {
+    width: 20px;
+    height: 20px;
+    fill: currentColor;
+    transition: transform 0.3s ease;
+  }
+  .btn:hover svg { transform: translateX(4px); }
+
   .btn-primary {
     color: var(--indigo-deep);
     background: var(--amber);
+    box-shadow: 0 8px 24px rgba(232, 154, 44, 0.3);
   }
-  .btn-primary:hover { background: var(--amber-deep); }
+  .btn-primary:hover { 
+    background: var(--amber-deep); 
+    transform: translateY(-3px);
+    box-shadow: 0 12px 32px rgba(232, 154, 44, 0.5);
+  }
   .btn-primary:active { transform: scale(0.98); }
 
-  /* Content sections: always white cards on the gradient, so body text contrast never
-     depends on where a section happens to land against the background. */
-  main { display: flex; flex-direction: column; gap: 20px; }
-
-  section.card {
-    background: var(--card);
-    border-radius: var(--radius);
-    box-shadow: 0 24px 60px rgba(20, 18, 50, 0.28);
-    padding: 32px clamp(20px, 5vw, 44px);
-  }
-
-  section.card h2 { margin: 0 0 14px; font-size: 22px; }
-  section.card p { margin: 0 0 14px; max-width: 68ch; }
-  section.card p:last-child { margin-bottom: 0; }
-
-  .card-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12px;
-    margin-top: 18px;
-  }
   .btn-secondary {
-    /* Solid, not the violet-to-indigo gradient used elsewhere on the site: at the violet
-       end that gradient puts white text under 4.5:1 contrast. Solid indigo-deep clears it
-       (roughly 7.8:1) across the whole button. */
     color: #fff;
     background: var(--indigo-deep);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
   }
-  .btn-secondary:hover { background: #201e42; }
+  .btn-secondary:hover { 
+    background: #1e1d3e; 
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(20, 18, 50, 0.4);
+  }
   .btn-secondary:active { transform: scale(0.98); }
 
   .btn-outline {
     color: var(--indigo);
     background: #fff;
-    border: 1.5px solid var(--line);
+    border: 2px solid var(--line);
   }
-  .btn-outline:hover { border-color: var(--violet); }
+  .btn-outline:hover { 
+    border-color: var(--violet); 
+    color: var(--violet);
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(123, 107, 214, 0.15);
+  }
   .btn-outline:active { transform: scale(0.98); }
 
-  ul.feature-list {
-    margin: 0;
-    padding-left: 1.2em;
-    max-width: 68ch;
+  /* --- Side-by-Side Grid Layout --- */
+  main { 
+    display: grid; 
+    grid-template-columns: 1fr; 
+    gap: 32px; 
   }
-  ul.feature-list li { margin-bottom: 8px; }
-  ul.feature-list li:last-child { margin-bottom: 0; }
+
+  @media (min-width: 840px) {
+    main { grid-template-columns: 1fr 1fr; }
+  }
+
+  section.card {
+    background: var(--card);
+    border-radius: var(--radius);
+    box-shadow: 0 20px 50px rgba(15, 14, 35, 0.2);
+    padding: 48px 40px;
+    transition: transform 0.4s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.4s ease;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+  }
+  
+  section.card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 6px;
+    background: linear-gradient(90deg, var(--violet), var(--amber));
+    opacity: 0;
+    transition: opacity 0.4s ease;
+  }
+
+  section.card:hover {
+    transform: translateY(-8px);
+    box-shadow: 0 30px 60px rgba(15, 14, 35, 0.3);
+  }
+  section.card:hover::before { opacity: 1; }
+
+  /* Visual Feature List inside Cards */
+  .feature-list-visual {
+    list-style: none;
+    padding: 0;
+    margin: 24px 0 36px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  
+  .feature-list-visual li {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    font-size: 15px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  
+  .feature-list-visual li strong {
+    display: block;
+    color: var(--indigo-deep);
+    font-size: 16px;
+    margin-bottom: 2px;
+  }
+
+  .list-icon {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    padding: 8px;
+    background: #f4f2fb;
+    border-radius: 10px;
+    fill: var(--violet);
+    margin-top: 2px;
+  }
+
+  section.card h3 {
+    font-size: 14px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin: 0 0 8px 0;
+    font-weight: 700;
+  }
+
+  section.card h2 { 
+    margin: 0 0 16px; 
+    font-size: 32px; 
+    color: var(--indigo-deep);
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }
+  
+  section.card p.card-intro { 
+    margin: 0; 
+    color: var(--muted); 
+    font-size: 17px;
+    line-height: 1.6;
+  }
+
+  .card-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-top: auto; 
+  }
 
   footer.site-footer {
-    margin-top: 36px;
+    margin-top: 80px;
     text-align: center;
-    font-size: 12px;
-    color: rgba(255, 255, 255, 0.8);
-    padding: 0 16px;
+    font-size: 14px;
+    color: rgba(255, 255, 255, 0.6);
+    padding: 0 20px;
   }
-  footer.site-footer a { color: inherit; text-decoration: underline; }
+  footer.site-footer a { 
+    color: rgba(255, 255, 255, 0.9); 
+    text-decoration: underline; 
+    text-underline-offset: 3px;
+    transition: color 0.2s;
+  }
+  footer.site-footer a:hover { color: var(--amber); }
 
   @media (prefers-reduced-motion: reduce) {
-    .btn-primary:active, .btn-secondary:active, .btn-outline:active { transform: none; }
+    .animate-up, .hero-graphic, .star, .zzz, .btn:hover svg { animation: none; opacity: 1; transform: none; }
+    .btn-primary:hover, .btn-secondary:hover, .btn-outline:hover, section.card:hover { transform: none; }
   }
 </style>
 </head>
 <body>
 
-  <header class="hero">
+  <!-- Background Twinkling Stars -->
+  <div class="hero-bg" aria-hidden="true">
+    <div class="star" style="top: 15%; left: 10%; width: 4px; height: 4px; animation-duration: 3s;"></div>
+    <div class="star" style="top: 25%; left: 80%; width: 6px; height: 6px; animation-duration: 4s; animation-delay: 1s;"></div>
+    <div class="star" style="top: 60%; left: 15%; width: 3px; height: 3px; animation-duration: 2.5s; animation-delay: 0.5s;"></div>
+    <div class="star" style="top: 40%; left: 70%; width: 5px; height: 5px; animation-duration: 5s; animation-delay: 2s;"></div>
+    <div class="star" style="top: 75%; left: 85%; width: 4px; height: 4px; animation-duration: 3.5s; animation-delay: 1.5s;"></div>
+  </div>
+
+  <header class="hero animate-up">
     <div class="wrap">
       <nav class="primary-nav" aria-label="Primary">
-        <a href="app/index.html">Try the app</a>
-        <a href="#researchers">For researchers</a>
-        <a href="https://github.com/DepressionCenter/MiNap-Go" target="_blank" rel="noopener">View on GitHub</a>
+        <a href="app/index.html">Launch App</a>
+        <a href="demo/index.html">Researcher Demo</a>
+        <a href="https://github.com/DepressionCenter/MiNap-Go" target="_blank" rel="noopener">GitHub</a>
       </nav>
-      <div class="brand-glyph" aria-hidden="true">&#127769;</div>
+
+      <!-- Custom SVG Illustration: Sleeping Cat on a Crescent Moon -->
+      <div class="hero-graphic" aria-hidden="true">
+        <div class="zzz z1">Z</div>
+        <div class="zzz z2">z</div>
+        <div class="zzz z3">z</div>
+        <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+          <!-- Glow -->
+          <circle cx="100" cy="100" r="90" fill="rgba(246, 182, 86, 0.1)" filter="blur(10px)"/>
+          <!-- Crescent Moon -->
+          <path d="M140 30 A80 80 0 1 0 170 140 A70 70 0 1 1 140 30 Z" fill="var(--amber)"/>
+          <!-- Cloud Base -->
+          <path d="M40 150 Q60 120 90 140 Q110 110 150 130 Q170 150 160 170 L40 170 Z" fill="#e7e4fa" opacity="0.9"/>
+          <!-- Sleeping Cat (Curled up) -->
+          <g transform="translate(80, 115)">
+            <!-- Cat Body -->
+            <path d="M0 25 C -20 25, -30 10, -20 -5 C -10 -20, 30 -20, 45 -5 C 60 10, 40 25, 20 25 Z" fill="#ffffff"/>
+            <!-- Cat Tail -->
+            <path d="M-15 15 Q -40 10, -35 -5 Q -30 -15, -20 -5" fill="#ffffff" stroke="#e7e4fa" stroke-width="3" stroke-linecap="round"/>
+            <!-- Cat Head -->
+            <circle cx="25" cy="-5" r="14" fill="#ffffff"/>
+            <!-- Ears (Stroke subdued to blend better) -->
+            <path d="M 15 -14 L 18 -24 L 25 -16 Z" fill="#ffffff" stroke="#c2bced" stroke-width="1.5"/>
+            <path d="M 35 -14 L 32 -24 L 25 -16 Z" fill="#ffffff" stroke="#c2bced" stroke-width="1.5"/>
+            <!-- Sleeping Eyes -->
+            <path d="M 18 -4 Q 22 0, 25 -4" fill="none" stroke="#2b2a44" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M 28 -4 Q 32 0, 35 -4" fill="none" stroke="#2b2a44" stroke-width="1.5" stroke-linecap="round"/>
+          </g>
+        </svg>
+      </div>
+
       <h1>MiNap Go</h1>
-      <p class="tagline">A browser-based sleep diary. Tap Sleep, tap Wake, and answer a short
-        morning survey -- no account needed to try it, and no extra technology to run a study.</p>
-      <a class="btn btn-primary" href="app/index.html">Try the standalone app</a>
+      <p class="tagline">A remarkably simple, browser-based sleep tracker. One tap when you fall asleep, and one tap when you wake up. An optional daily survey defaults to research-ready questions, giving you complete control over your sleep data.</p>
     </div>
   </header>
 
   <main class="wrap">
 
-    <section class="card" aria-labelledby="about-heading">
-      <h2 id="about-heading">What MiNap Go is</h2>
-      <p>MiNap Go is a sleep diary built on the Consensus Sleep Diary, the instrument
-        researchers commonly use to study sleep. Two taps record when you fall asleep and
-        when you wake, and a short daily survey fills in the rest.</p>
-      <p>It comes in two versions that never share data with each other:</p>
-      <ul class="feature-list">
-        <li><strong>The standalone app</strong> keeps everything on your own device. No
-          account, no server, and it works offline once installed.</li>
-        <li><strong>The study version</strong> is what a researcher deploys for a research
-          study. It saves each participant's entries to that researcher's own private
-          Google Sheet.</li>
+    <!-- Left Card: Consumer Focus -->
+    <section class="card animate-up delay-1" aria-labelledby="try-heading">
+      <h3>For Individuals</h3>
+      <h2 id="try-heading">The Standalone App</h2>
+      <p class="card-intro">The standalone app keeps everything on your own device. It requires no accounts, communicates with no servers, and is packed with features designed for everyday use:</p>
+      
+      <ul class="feature-list-visual">
+        <li>
+          <svg class="list-icon" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+          <div>
+            <strong>Universal & Offline</strong>
+            Runs directly in any modern browser. You can install it to your home screen so it keeps working completely without a connection.
+          </div>
+        </li>
+        <li>
+          <svg class="list-icon" viewBox="0 0 24 24"><path d="M20 12c0-2.54-1.19-4.81-3.04-6.27L16 0H8l-.95 5.73C5.19 7.19 4 9.45 4 12s1.19 4.81 3.05 6.27L8 24h8l.96-5.73A7.976 7.976 0 0020 12zm-8 6c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z"/><circle cx="12" cy="12" r="1.5"/></svg>
+          <div>
+            <strong>Wearable Ready</strong>
+            Fully functional on smartwatches that support a web browser, making tracking from bed a breeze.
+          </div>
+        </li>
+        <li>
+          <svg class="list-icon" viewBox="0 0 24 24"><path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zM9 6c0-1.66 1.34-3 3-3s3 1.34 3 3v2H9V6zm9 14H6V10h12v10zm-6-3c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"/></svg>
+          <div>
+            <strong>Absolute Privacy</strong>
+            Nothing you enter is sent anywhere. Your sensitive sleep data stays locked tightly on your local hardware.
+          </div>
+        </li>
+        <li>
+          <svg class="list-icon" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+          <div>
+            <strong>Shareable Insights</strong>
+            Easily export your data or generate a comprehensive report to share securely with your healthcare provider.
+          </div>
+        </li>
       </ul>
-    </section>
-
-    <section class="card" aria-labelledby="try-heading">
-      <h2 id="try-heading">Track your own sleep</h2>
-      <p>The standalone app runs entirely in your browser. Nothing you enter is sent
-        anywhere, and you can install it so it keeps working without a connection.</p>
+      
       <div class="card-actions">
-        <a class="btn btn-secondary" href="app/index.html">Open the standalone app</a>
+        <a class="btn btn-secondary" href="app/index.html">
+          Launch App
+          <svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
       </div>
     </section>
 
-    <section class="card" id="researchers" aria-labelledby="researchers-heading">
-      <h2 id="researchers-heading">For researchers</h2>
-      <p>Running a study with MiNap Go takes a Google account and a copy of the template
-        Sheet -- no server to host and no code to write. Each study gets its own Sheet, and
-        only your enrolled participants' IDs can log data to it.</p>
+    <!-- Right Card: Researcher Focus -->
+    <section class="card animate-up delay-2" id="researchers" aria-labelledby="researchers-heading">
+      <h3>For Researchers</h3>
+      <h2 id="researchers-heading">The Study Version</h2>
+      <p class="card-intro">Stop worrying about deployment logistics and start collecting data today. The study version is what a researcher deploys for a research study. It completely eliminates the barriers to digital sleep research:</p>
+      
+      <ul class="feature-list-visual">
+        <li>
+          <svg class="list-icon" viewBox="0 0 24 24"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/></svg>
+          <div>
+            <strong>Ready-to-Run & Zero Cost</strong>
+            This is the standalone version of the original MiNap smartwatch app. Experience research-grade tracking with zero infrastructure required and zero hosting costs. 
+          </div>
+        </li>
+        <li>
+          <svg class="list-icon" viewBox="0 0 24 24"><path d="M9.4 16.6L4.8 12l4.6-4.6L8 6l-6 6 6 6 1.4-1.4zm5.2 0l4.6-4.6-4.6-4.6L16 6l6 6-6 6-1.4-1.4z"/></svg>
+          <div>
+            <strong>Zero Code Deployment</strong>
+            Skip the IT department. Running a study with MiNap Go takes only a Google account and a copy of the template Sheet -- no server to host and absolutely no code to write.
+          </div>
+        </li>
+        <li>
+          <svg class="list-icon" viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+          <div>
+            <strong>Secure Data Silos</strong>
+            Each study gets its own independent Sheet, securely logging only enrolled participant IDs. Data is never mingled between studies.
+          </div>
+        </li>
+      </ul>
+      
       <div class="card-actions">
-        <a class="btn btn-outline" href="demo/index.html">Try the live demo</a>
-        <a class="btn btn-outline"
-           href="https://github.com/DepressionCenter/MiNap-Go#quick-start-guide"
-           target="_blank" rel="noopener">Read the Quick Start Guide</a>
+        <a class="btn btn-primary" href="demo/index.html">
+          Researcher Demo
+          <svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </a>
+        <a class="btn btn-outline" href="https://github.com/DepressionCenter/MiNap-Go#quick-start-guide" target="_blank" rel="noopener">
+          Read the Quick Start Guide
+        </a>
       </div>
     </section>
 
   </main>
 
-  <footer class="site-footer">
+  <footer class="site-footer animate-up delay-3">
     &copy; 2026 The Regents of the University of Michigan &nbsp;|&nbsp; <a href="https://depressioncenter.org" target="_blank" rel="noopener">Eisenberg Family Depression Center</a>
   </footer>
 
