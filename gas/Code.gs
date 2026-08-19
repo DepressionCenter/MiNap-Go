@@ -79,6 +79,15 @@ const SCHEMA_VERSION = 1;
 const BOOL_YES = 'Yes';
 const BOOL_NO = 'No';
 
+/** The two values a Yes/No dropdown validation offers, in the order they should list. */
+const YES_NO_VALUES = [BOOL_YES, BOOL_NO];
+
+/** Rows below the header a dropdown validation covers on a tab whose row count keeps growing
+ *  (ParticipantsSetup), rather than one fixed by the declaration (QuestionsSetup). Matches the
+ *  range a person creates by hand through the spreadsheet UI: far enough for a study to grow
+ *  into without validating the entire column. */
+const DROPDOWN_GROWABLE_ROWS = 999;
+
 /** How many question rows QuestionsSetup always holds, and how many rows the questions table
  *  on the `_calc` tab reserves for charting. The two are the same number by design: one chart
  *  row per possible question, so a spare question can be put to use without any tab changing
@@ -284,6 +293,7 @@ const WORKBOOK = {
       hidden: false,
       frozenRows: 1,
       appendOnly: false,
+      validationRows: QUESTION_SLOT_COUNT, // this tab never grows past its twenty rows
       columns: [
         { header: 'question_id', width: 100,
           note: 'Fixed forever. Every stored answer names its question by this ID and by '
@@ -292,13 +302,13 @@ const WORKBOOK = {
           note: 'The wording the participant reads. Settle it before your study starts: once '
             + 'anyone has answered, changing the wording puts two different questions under '
             + 'one ID.' },
-        { header: 'answer_type', width: 140,
+        { header: 'answer_type', width: 140, dropdown: ANSWER_TYPES,
           note: 'One of: ' + ANSWER_TYPES.join(', ') + '.' },
         { header: 'min_value', width: 90,
           note: 'Lowest value allowed, for scale, ordinal, count, and duration_minutes.' },
         { header: 'max_value', width: 90,
           note: 'Highest value allowed, for scale, ordinal, count, and duration_minutes.' },
-        { header: 'input_style', width: 110,
+        { header: 'input_style', width: 110, dropdown: INPUT_STYLES,
           note: 'How the question is shown: ' + INPUT_STYLES.join(', ') + '. Leave it empty '
             + 'for a time question, which uses the time picker built into the device.' },
         { header: 'min_label', width: 140,
@@ -311,11 +321,11 @@ const WORKBOOK = {
           note: 'Fills the answer in from a marker the participant already tapped: '
             + PREFILL_SOURCES.join(' or ') + '. Leave it empty for every other question. The '
             + 'participant can change a pre-filled answer, and the marker stays as it was.' },
-        { header: 'required', width: 90,
+        { header: 'required', width: 90, dropdown: YES_NO_VALUES,
           note: 'Yes or No. A required question must be answered before the survey can be '
             + 'submitted, and cannot be hidden. Every question ships as No, so that somebody '
             + 'who cannot remember one answer can still submit the rest of the night.' },
-        { header: 'visible', width: 90,
+        { header: 'visible', width: 90, dropdown: YES_NO_VALUES,
           note: 'Yes to ask this question, No to leave it out.' },
         { header: 'sort_order', width: 100,
           note: 'The order questions are asked in, lowest first.' }
@@ -330,6 +340,7 @@ const WORKBOOK = {
       hidden: false,
       frozenRows: 1,
       appendOnly: false,
+      validationRows: DROPDOWN_GROWABLE_ROWS, // rows keep growing as participants are added
       columns: [
         { header: 'study_id', width: 110,
           note: 'Your study ID. Give it to participants at enrollment. Several studies can '
@@ -338,7 +349,7 @@ const WORKBOOK = {
         { header: 'participant_id', width: 130,
           note: 'A randomly assigned ID. Never a name, a set of initials, a date of birth, or '
             + 'a medical record number.' },
-        { header: 'enabled', width: 90,
+        { header: 'enabled', width: 90, dropdown: YES_NO_VALUES,
           note: 'Type Yes to let this person log in, or No to end their access while keeping '
             + 'their data. A row with this cell left empty cannot log in: access is granted '
             + 'only where somebody has said so.' },
@@ -1028,6 +1039,23 @@ function ensureTab_(ss, tab, position) {
 }
 
 /**
+ * Restricts a column to a fixed list of values with a dropdown, so a person filling in the cell
+ * by hand picks from the same vocabulary the app itself reads or writes there, rather than
+ * typing a variant. Invalid input is rejected outright.
+ *
+ * @param {Sheet} sh The worksheet.
+ * @param {number} column Column number, counting from 1.
+ * @param {Array<string>} values The allowed values, in the order the dropdown should list them.
+ * @param {number} rowCount How many rows below the header to cover.
+ */
+function applyDropdown_(sh, column, values, rowCount) {
+  const rule = SpreadsheetApp.newDataValidation().requireValueInList(values, true)
+    .setAllowInvalid(false)
+    .build();
+  sh.getRange(2, column, rowCount, 1).setDataValidation(rule);
+}
+
+/**
  * Writes any missing headers on an ordinary tab, and its default rows if the tab is new.
  *
  * @param {Sheet} sh The worksheet.
@@ -1038,11 +1066,14 @@ function ensureTable_(sh, tab) {
   const wasEmpty = sh.getLastRow() === 0;
   const matched = ensureHeaderRow_(sh, tab.name, 1, tab.columns);
 
-  // Only for columns this call is creating for the first time: a researcher who unhides one
-  // of these to read or edit it by hand should not find it hidden again on a later open.
+  // Only for columns this call is creating for the first time: a researcher who unhides one,
+  // or removes a dropdown, should not find its old state restored on a later open.
   for (let i = matched; i < tab.columns.length; i++) {
     if (tab.columns[i].width) sh.setColumnWidth(i + 1, tab.columns[i].width);
     if (tab.columns[i].hidden) sh.hideColumns(i + 1);
+    if (tab.columns[i].dropdown) {
+      applyDropdown_(sh, i + 1, tab.columns[i].dropdown, tab.validationRows || DROPDOWN_GROWABLE_ROWS);
+    }
   }
 
   // Default rows are a starting point rather than a setting the app owns. A researcher may
