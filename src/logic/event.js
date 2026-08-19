@@ -2,7 +2,7 @@
 // event.js
 // Author(s): Gabriel Mongefranco
 // Created: 2026-08-18
-// Last Modified: 2026-08-18
+// Last Modified: 2026-08-19
 // Summary: The Sleep/Wake event object shape, shared by both builds. No browser or Apps
 //   Script globals; identical in both builds.
 // Notes: See README file for documentation and full license information.
@@ -29,18 +29,21 @@ function uuid() {
   });
 }
 
-function buildEvent(type, session, epochMs) {
+// identity is a plain {study_id, participant_id, tz} object, not the vault's own in-memory
+// session -- kept distinctly named so the two are never confused once every src/data and
+// src/logic file is concatenated into one script scope by build.py.
+function buildEvent(type, identity, epochMs) {
   var ms = epochMs || Date.now();
   var d = new Date(ms);
   return {
     record_id: uuid(),
-    study_id: session.study_id,
-    participant_id: session.participant_id,
+    study_id: identity.study_id,
+    participant_id: identity.participant_id,
     event_type: type,
     event_epoch_ms: ms,
     event_iso_utc: d.toISOString(),
-    event_tz: session.tz,
-    event_local: d.toLocaleString('en-US', { timeZone: session.tz, hour12: true }),
+    event_tz: identity.tz,
+    event_local: d.toLocaleString('en-US', { timeZone: identity.tz, hour12: true }),
     app_version: APP_VERSION
   };
 }

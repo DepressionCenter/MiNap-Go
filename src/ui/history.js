@@ -2,7 +2,7 @@
 // history.js
 // Author(s): Gabriel Mongefranco
 // Created: 2026-08-18
-// Last Modified: 2026-08-18
+// Last Modified: 2026-08-19
 // Summary: Sleep-history rendering and inline editing of a previous entry's date and time.
 // Notes: See README file for documentation and full license information.
 //
@@ -48,9 +48,9 @@ function timeField(ev, label) {
   return text + extra;
 }
 
-function renderHistory() {
+async function renderHistory() {
   var box = document.getElementById('history-list');
-  var hist = load(K_HISTORY, []);
+  var hist = await getHistory();
   if (!hist.length) {
     box.innerHTML = '<div class="empty"><div class="moon">&#127769;</div><p>No nights yet. Tap Go to sleep to begin.</p></div>';
     return;
@@ -77,8 +77,8 @@ function renderHistory() {
 }
 
 // ----- editing a previous entry's date/time -----
-function findHistEvent(recordId) {
-  var hist = load(K_HISTORY, []);
+async function findHistEvent(recordId) {
+  var hist = await getHistory();
   for (var i = 0; i < hist.length; i++) {
     if (hist[i].record_id === recordId) return hist[i];
   }
@@ -87,34 +87,35 @@ function findHistEvent(recordId) {
 
 var editingRecordId = null;
 
-function openEditor(recordId) {
-  var ev = findHistEvent(recordId);
+async function openEditor(recordId) {
+  var ev = await findHistEvent(recordId);
   if (!ev || !isEditable(ev)) return;
   editingRecordId = recordId;
   document.getElementById('edit-modal-title').textContent =
     'Edit ' + (ev.event_type === 'SLEEP' ? 'sleep' : 'wake') + ' time';
   document.getElementById('edit-datetime').value = toDatetimeLocalValue(ev.event_epoch_ms, ev.event_tz);
-  document.getElementById('edit-modal').classList.remove('hidden');
+  openModal('edit-modal');
 }
 
 function closeEditor() {
   editingRecordId = null;
-  document.getElementById('edit-modal').classList.add('hidden');
+  closeModal('edit-modal');
 }
 
-function applyServerUpdate(saved) {
+async function applyServerUpdate(saved) {
   if (!saved) return;
-  var hist = load(K_HISTORY, []);
-  for (var i = 0; i < hist.length; i++) {
-    if (hist[i].record_id === saved.record_id) { hist[i] = saved; break; }
-  }
-  save(K_HISTORY, hist);
+  await updateHistory(function (hist) {
+    for (var i = 0; i < hist.length; i++) {
+      if (hist[i].record_id === saved.record_id) { hist[i] = saved; break; }
+    }
+    return hist;
+  });
 }
 
-function saveEditor() {
-  var ev = findHistEvent(editingRecordId);
-  var session = load(K_SESSION, null);
-  if (!ev || !session) { closeEditor(); return; }
+async function saveEditor() {
+  var ev = await findHistEvent(editingRecordId);
+  var identity = getSessionIdentity();
+  if (!ev || !identity) { closeEditor(); return; }
 
   var val = document.getElementById('edit-datetime').value; // "YYYY-MM-DDTHH:mm"
   var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(val || '');
@@ -124,8 +125,8 @@ function saveEditor() {
   var d = new Date(epoch);
   var updated = {
     record_id: ev.record_id,
-    study_id: session.study_id,
-    participant_id: session.participant_id,
+    study_id: identity.studyId,
+    participant_id: identity.participantId,
     event_epoch_ms: epoch,
     event_iso_utc: d.toISOString(),
     event_tz: ev.event_tz,
@@ -134,7 +135,7 @@ function saveEditor() {
 
   // Show the edit immediately (same optimistic-first pattern as logging a new event);
   // the server round-trip below reconciles with the authoritative row afterward.
-  applyServerUpdate(Object.assign({}, ev, updated, { edited: 'TRUE' }));
+  await applyServerUpdate(Object.assign({}, ev, updated, { edited: 'TRUE' }));
   closeEditor();
   renderHistory();
 
@@ -142,7 +143,7 @@ function saveEditor() {
   btn.disabled = true;
   updateEvent(updated, function (res) {
     btn.disabled = false;
-    if (res && res.invalid) { toast(MSG_INVALID_CREDENTIALS); return; }
+    if (res && res.invalid) { toast(REASON_MESSAGES.invalid_login); return; }
     applyServerUpdate(res && res.row);
     renderHistory();
     toast('Time updated');

@@ -3,7 +3,7 @@ This file is part of MiNap Go
 docs/architecture.md
 Author(s): Gabriel Mongefranco
 Created: 2026-08-17
-Last Modified: 2026-08-18
+Last Modified: 2026-08-19
 Summary: Version 1 architecture specification for MiNap Go: the two build targets, the Google Sheet schema, participant authentication, dashboards, and the decisions behind them.
 Notes: See README file for documentation and full license information.
 
@@ -824,6 +824,48 @@ participant's history on that device becomes unreadable. In a study this is
 acceptable: the Sheet holds the record. Say so in the participant instructions.
 
 Private notes are unaffected. See section 6.
+
+### 5.5 Local storage
+
+The PIN-unlocked key described in 5.3 encrypts an IndexedDB database, not
+localStorage. IndexedDB replaced localStorage in version 1 because the
+participant-facing screens need one database name and record layout that
+holds up for the whole build, not a handful of ad hoc keys.
+
+**Database name.** The static site that serves the standalone build hosts
+other PWAs on the same origin, and IndexedDB databases are scoped per origin,
+not per path -- a generic name could collide with another app's. Both builds
+use the fixed name `minap-go`.
+
+**Records are namespaced by identity.** A single Apps Script deployment can
+serve more than one study sharing one workbook (section 3.3), and a device --
+a researcher's own test phone, a shared household device -- could plausibly
+be used for more than one study/participant pair over time. Every record is
+keyed by `{studyId}_{participantId}_{collection}`, so two identities used on
+the same device get fully separate, independently encrypted data: no
+overwriting, no orphaning. The standalone build has no login and only ever
+one local identity, so it uses a fixed prefix instead.
+
+A small unencrypted record remembers the last identity used on this device,
+purely so the login screen can pre-fill the Study ID and Participant ID
+fields for the common case (one participant, one device, every night). A
+"Not you? Switch account" link clears it; either way, the two IDs typed are
+what is actually looked up, so switching never touches another identity's
+data.
+
+**Logging out locks; it never deletes.** "Log out" clears the in-memory key
+and PIN and returns to the PIN entry screen for the same identity. Every
+namespaced record stays on disk, still encrypted, exactly as before --
+logging back in with the correct PIN sees the same history again. This
+matters because the study build's storage can already be cleared by the
+browser on its own (section 1); logging out should never be a second way to
+lose the same data. The same rule applies when a revoked Study/Participant ID
+forces a logout: a later re-enable should not cost the participant their
+on-device history.
+
+**The standalone build has no logout function, because it has no login**
+(this whole section applies only to the study build). There is nothing to
+log out of.
 
 ---
 

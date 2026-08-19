@@ -2,7 +2,7 @@
 // gas.js
 // Author(s): Gabriel Mongefranco
 // Created: 2026-08-18
-// Last Modified: 2026-08-18
+// Last Modified: 2026-08-19
 // Summary: Environment adapter for the Apps Script build. Wraps every google.script.run call
 //   site behind a named function so the rest of the client never references
 //   google.script.run directly -- this is the only file allowed to.
@@ -52,4 +52,22 @@ function getConfig(onSuccess, onFailure) {
     .withSuccessHandler(onSuccess)
     .withFailureHandler(onFailure)
     .getConfig();
+}
+
+// Sets a participant's PIN for the first time, or changes it (oldPin is required and checked
+// only when one is already on file). onSuccess receives {ok, reason}; onFailure fires only on a
+// transport failure (offline, etc.), never on a rejected PIN -- that arrives as ok:false.
+function setPin(studyId, participantId, newPin, oldPin, onSuccess, onFailure) {
+  google.script.run
+    .withSuccessHandler(onSuccess)
+    .withFailureHandler(onFailure)
+    .setPin(studyId, participantId, newPin, oldPin);
+}
+
+// Checks a PIN against the one on file, for logging in on a device with no local profile yet.
+function verifyPin(studyId, participantId, pin, onSuccess, onFailure) {
+  google.script.run
+    .withSuccessHandler(onSuccess)
+    .withFailureHandler(onFailure)
+    .verifyPin(studyId, participantId, pin);
 }

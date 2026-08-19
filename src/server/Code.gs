@@ -2,7 +2,7 @@
 // Code.gs
 // Author(s): Gabriel Mongefranco
 // Created: 2026-07-09
-// Last Modified: 2026-08-18
+// Last Modified: 2026-08-19
 // Summary: Server-side Apps Script; declares the workbook layout, creates whatever part of it is
 //   missing including the Dashboard charts, serves the web app, checks participant logins and
 //   PINs, and records sleep and wake markers and survey answers.
@@ -1562,6 +1562,12 @@ function constantTimeEquals_(a, b) {
  * described in section 5.2 of the architecture specification: enter the old one, then the new
  * one.
  *
+ * The locked guard applies only when a pinHash already exists. A freshly reset account (a
+ * researcher cleared pin_hash, pin_salt, and failed_attempts, per the pin_hash column's own
+ * note) has nothing left to protect from guessing, and writePin_ is the only place that clears
+ * locked -- guarding on it unconditionally would mean a reset account could never complete
+ * setPin at all, since nothing would ever run to unlock it.
+ *
  * @param {string} studyId The participant's Study ID.
  * @param {string} participantId The participant's Participant ID.
  * @param {string} newPin The PIN to store.
@@ -1572,9 +1578,9 @@ function constantTimeEquals_(a, b) {
 function setPin(studyId, participantId, newPin, oldPin) {
   const participant = findParticipantRow_(studyId, participantId);
   if (!participant || !participant.enabled) return { ok: false, reason: 'invalid_login' };
-  if (participant.locked) return { ok: false, reason: 'locked' };
 
   if (participant.pinHash) {
+    if (participant.locked) return { ok: false, reason: 'locked' };
     const check = checkPin_(participant, oldPin);
     if (!check.ok) return check;
   }

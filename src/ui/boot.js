@@ -2,9 +2,9 @@
 // boot.js
 // Author(s): Gabriel Mongefranco
 // Created: 2026-08-18
-// Last Modified: 2026-08-18
-// Summary: Startup: loads server config, wires DOM event listeners, and restores a saved
-//   session or shows the login screen.
+// Last Modified: 2026-08-19
+// Summary: Startup: loads server config, wires DOM event listeners, and shows the login screen,
+//   pre-filled with the last identity used on this device if there is one.
 // Notes: See README file for documentation and full license information.
 //
 // Copyright © 2026 The Regents of the University of Michigan
@@ -23,11 +23,20 @@ function loadConfig() {
   getConfig(function (cfg) { if (cfg && cfg.editWindowDays) editWindowDays = cfg.editWindowDays; }, function () {});
 }
 
-function boot() {
+async function boot() {
   buildTzOptions();
   loadConfig();
+
   document.getElementById('btn-start').addEventListener('click', doStart);
+  document.getElementById('btn-switch-account').addEventListener('click', doSwitchAccount);
+  document.getElementById('btn-pin-entry').addEventListener('click', doPinEntry);
+  document.getElementById('btn-pin-entry-back').addEventListener('click', backToLogin);
+  document.getElementById('btn-pin-setup').addEventListener('click', doPinSetup);
+  document.getElementById('btn-pin-setup-back').addEventListener('click', backToLogin);
   document.getElementById('btn-logout').addEventListener('click', doLogout);
+  document.getElementById('btn-change-pin').addEventListener('click', openChangePinModal);
+  document.getElementById('btn-change-pin-cancel').addEventListener('click', closeChangePinModal);
+  document.getElementById('btn-change-pin-save').addEventListener('click', doChangePin);
   document.getElementById('btn-sleep').addEventListener('click', onSleep);
   document.getElementById('btn-wake').addEventListener('click', onWake);
   document.getElementById('btn-history').addEventListener('click', function () {
@@ -44,8 +53,12 @@ function boot() {
   document.getElementById('btn-edit-cancel').addEventListener('click', closeEditor);
   document.getElementById('btn-edit-save').addEventListener('click', saveEditor);
 
-  if (load(K_SESSION, null)) enterHome();
-  else show('screen-login');
+  var last = await getLastIdentity();
+  if (last) {
+    document.getElementById('in-study').value = last.study_id;
+    document.getElementById('in-part').value = last.participant_id;
+  }
+  show('screen-login');
 }
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);

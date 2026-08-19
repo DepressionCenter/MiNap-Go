@@ -2,7 +2,7 @@
 // platform.js
 // Author(s): Gabriel Mongefranco
 // Created: 2026-08-18
-// Last Modified: 2026-08-18
+// Last Modified: 2026-08-19
 // Summary: Environment adapter for the standalone build. There is no server in this build, so
 //   every function throws rather than returning a value -- a silent no-op would let a future
 //   caller believe a submission succeeded when nothing happened.
@@ -35,4 +35,12 @@ function updateEvent(payload, onSuccess, onFailure) {
 
 function getConfig(onSuccess, onFailure) {
   throw new Error('getConfig is not available in the standalone build');
+}
+
+function setPin(studyId, participantId, newPin, oldPin, onSuccess, onFailure) {
+  throw new Error('setPin is not available in the standalone build');
+}
+
+function verifyPin(studyId, participantId, pin, onSuccess, onFailure) {
+  throw new Error('verifyPin is not available in the standalone build');
 }
