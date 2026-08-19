@@ -81,15 +81,15 @@ Tuesday morning about Monday night carries Monday's `sleep_day`.
 The only tab the template workbook ships with. It holds deployment instructions
 written for the researcher, who may reformat it freely.
 
-The app writes exactly one cell and changes nothing else.
+The app never creates this tab and never writes prose into it. It writes exactly
+one cell and changes nothing else.
 
 | Cell | Value | Written by |
 |---|---|---|
-| F1 | The live web app link to share with participants | The app, the first time the web app is opened |
+| A10 | The live web app link to share with participants, written in bold on a pale yellow background | The app, the first time the web app is opened |
 
-Until then the cell reads `The URL to share with participants will appear here
-after publishing`. The link is an output rather than a setting, which is why it
-is not on a setup tab.
+The cell is empty until then. The link is an output rather than a setting, which
+is why it is not on a setup tab.
 
 ### StudySettings
 
@@ -203,7 +203,7 @@ Who may log in. One row per participant per study.
 |---|---|---|
 | `study_id` | Your study ID, given to participants at enrollment | Researcher |
 | `participant_id` | A randomly assigned ID. Never a name, initials, a date of birth, or a medical record number | Researcher |
-| `enabled` | `Yes` or `No`. Set it to `No` to end someone's access while keeping their data | Researcher |
+| `enabled` | `Yes` to let this person log in, `No` to end their access while keeping their data. A blank cell does not grant access | Researcher |
 | `pin_hash` | Written when the participant first sets a PIN | App |
 | `pin_salt` | A random value for this participant alone | App |
 | `pin_set_at` | When the PIN was set, in UTC | App |
@@ -530,7 +530,7 @@ the order things get built in, read the implementation plan.
 
 - [MiNap Go architecture and version 1 specification](./architecture.md)
 - [MiNap Go version 1 implementation plan](./implementation-plan.md)
-- [MiNap Go technical overview](./Overview.md)
+- [MiNap Go technical overview](./overview.md)
 - [Sleep Data Automation repository](https://github.com/DepressionCenter/SleepDataAutomation)
   — the source of the sleep day rule
 - [The Consensus Sleep Diary: Standardizing Prospective Sleep Self-Monitoring](https://doi.org/10.5665/sleep.1642)

@@ -73,73 +73,48 @@ path that no longer exists.
 Everything here is permanent. A deployed copy never receives an update, so a
 column added later has to be added by hand in every researcher's Sheet.
 
-**Task 1 — the layout declaration. Done, and now needs reworking.**
+**Task 1 — the layout declaration, and the code that builds it. Done.**
 
 `WORKBOOK` at the top of `src/server/Code.gs` declares the tabs, their columns and
 notes, the question rows, the Dashboard filter cells, and the four fixed `_calc`
-blocks. The structure is right and stays. What it declares has changed: survey
-data is now two long tabs rather than one wide one, and question IDs are `Q01`
-onward rather than `EMA_01` onward. See section 3.6 of the specification.
+blocks. It now matches section 3.6: survey data is two long tabs rather than one
+wide one, and question IDs are `Q01` onward. `ensureWorkbook_` walks it on every
+open and creates what is missing, and the version 0 Setup tab and its code are
+gone, so only one layout exists in the file. `build.py --check` runs on a
+case-sensitive filesystem.
 
-**Task 1a — bring the declaration in line with the revised schema**
-
-- Replace the `EMA` tab with `Surveys` and `SurveyAnswers`, per section 3.6. Drop
-  `emaAnswerColumns_` and the twenty answer columns with it.
-- Rename question IDs from `EMA_01`–`EMA_20` to `Q01`–`Q20`. Change
-  `questionId_` and the default rows together.
-- Add `required` to QuestionsSetup, defaulting to `No` on every shipped question.
-- Add `datetime` to `ANSWER_TYPES` and rename `binary` to `boolean`.
-- Point the `_calc` questions block at `SurveyAnswers` with `AVERAGEIFS` and
-  `COUNTIFS` over `question_id`, instead of at twenty answer columns.
-- Retire what the declaration replaces: `SHEET_NAME`, `SETUP_SHEET`, `HEADERS`,
-  the `SETUP_COL_*` constants, `DEFAULT_STUDY_ID`, `DEFAULT_PARTICIPANT_IDS`,
-  `ensureSetupSheet_`, and `ensureSheet_` still describe the three-column Setup tab
-  from version 0. `ensureSheet_` also calls `sh.clear()` on a header mismatch,
-  which section 3.9 forbids. Two layouts in one file is how a workbook ends up
-  with both.
-- Fix the build before anything else in this phase. `build.py` reads
-  `src/index.html`; the file is committed as `src/Index.html`. That works on a
-  case-insensitive filesystem and fails everywhere else, so `--check` cannot run
-  on Linux today. Rename the file, keep the header's own filename line in step,
-  and confirm `--check` passes.
+The four charts were not part of this task, and the app cannot write yet: the
+server functions below replace what was deleted.
 
 **Remaining deliverables**
 
-- One function that walks `WORKBOOK` and creates what is missing: StudySettings,
-  QuestionsSetup, ParticipantsSetup, SleepDiary, Surveys, SurveyAnswers,
-  Dashboard, `_calc`. It also writes the live web app link into the one cell
-  reserved for it on the README tab.
-- The four charts, created by the same pass using the Apps Script chart builder,
-  against a `_calc` tab whose size is fixed in the declaration.
-- Provisioning that never clears a tab. It creates what is missing and stops with
-  a clear message if it finds a shape it does not recognise. Losing a researcher's
-  participant list or their charts to a header mismatch is not acceptable.
+- The four charts, created by the provisioning pass using the Apps Script chart
+  builder, against a `_calc` tab whose size is fixed in the declaration.
+- The `_calc` formulas themselves, for all four blocks. The declaration fixes the
+  rows each block occupies and names its range; nothing yet fills them in.
 - `sleep_day` filled in by the server for both marker types, including the lookup
   that pairs a WAKE to its SLEEP and the recompute when an edit moves a marker
   across noon. Transcribe the rule from the Sleep Data Automation exactly, in
   local time, anchored on sleep onset. Section 4 has both forms side by side.
 - A rewritten README tab for the template Sheet. The current text describes a
   three-column Setup tab and no PIN step.
-- All QuestionsSetup columns, including the ones only the standalone build reads,
-  and all twenty question rows.
 - The full timestamp set on both survey tabs: survey opened, ended, and its
   reason, and per answer the answered time, the last edit, the edit count, and the
   time taken. None of these can be recovered after the fact.
 - `question_text_shown` written onto every SurveyAnswers row.
-- One spelling for every yes-or-no column, per section 3.10: `Yes` and `No` written,
-  and `0`/`1`, real booleans, and any casing of the words accepted on read.
-- The Consensus Sleep Diary Core questions as defaults, numbered to match the
-  instrument, with the free-text comments item left out and the instrument credited
-  in the README.
+- `Yes` and `No` written into every yes-or-no column, per section 3.10. The loose
+  read is already there in `isYes_`; nothing writes one yet.
+- Every write resolves its columns by header text at the moment it writes, rather
+  than trusting the positions in the declaration. Provisioning runs once per layout
+  version rather than on every open, so nothing else looks at the layout between one
+  open and the next, and a column moved or deleted by hand would otherwise be found
+  only by the row that landed under the wrong heading.
 - Server functions: `validateLogin`, `setPin`, `verifyPin`, `getConfig`,
   `logMarker`, `logSurvey`, `updateMarker`. No function returns diary data.
   `logSurvey` writes the Surveys row and its SurveyAnswers rows inside one lock,
   so neither can exist without the other. It accepts a survey with no answers, and
   records why.
 - PIN storage with a per-participant random salt, and a lockout counter.
-- `schemaVersion` in the declaration, written into StudySettings on creation and
-  checked on later opens, so a Sheet built by an older version is detected rather
-  than silently written to.
 - Documentation updated with the tabs, the columns, and what a researcher edits by
   hand. A manual deployment into a blank Sheet now gets everything, charts
   included, so the developer route and the template route end in the same place.
@@ -249,7 +224,10 @@ than as encryption.
 
 ## Conclusion
 
-Phase 1 is high priority, and now completed. Phase 2 needs task 1a, also high priority, as it brings the schema into alignment with changes decided after the original plan had already started.
+Phase 1 and Phase 2 task 1 are complete. The workbook layout is now declared in one
+place and built from that declaration, which is the foundation everything after it
+sits on. The next work is the server functions that write to it, and until they
+exist the app can create a workbook but cannot record anything into it.
 
 ## Additional resources
 

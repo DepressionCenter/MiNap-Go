@@ -59,7 +59,7 @@ You can also deploy the app manually into a blank project if you want to rebuild
 2. Open the sheet and click **Extensions > Apps Script** to open the bound script project.
 3. Replace the default `Code.gs` contents with this repo's [`gas/Code.gs`](gas/Code.gs).
 4. **File > New > HTML file**, five times; name them exactly `Index`, `Stylesheet`, `Platform`, `Core`, and `App`, and paste in the matching files from the repo's [`gas`](gas/) folder.
-5. Open Project Settings (gear icon) and enable "Show `appsscript.json` manifest file in editor"; open `appsscript.json`, delete its contents, and paste in this repo's [`gas/appsscript.json`](gas/appsscript.json). (Its license notice lives beside it in `gas/appsscript.json.LICENSE.txt` instead, since JSON has no comment syntax to hold one -- nothing in that file needs pasting.)
+5. Open Project Settings (gear icon) and enable "Show `appsscript.json` manifest file in editor"; open `appsscript.json`, delete its contents, and paste in this repo's [`gas/appsscript.json`](gas/appsscript.json). (JSON has no comment syntax, so its license notice rides along in a leading `_license` key.)
 6. Click **Deploy > New deployment > Web app**. Set "Execute as" to "Me" to ensure it runs under your account. Set "Who has access" to "Anyone" so participants can access it without a Google account. Authorize the script (as described in the quick start guide).
 7. Open the web app URL once; the shareable URL is written to the **Setup** tab.
 

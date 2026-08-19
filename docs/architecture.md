@@ -156,9 +156,11 @@ exported without knowing anything special about it.
 
 The link to the deployed web app is the one exception to "the app never touches the
 README tab". It is an output, not a setting, so it does not belong on a tab the
-researcher fills in. It goes in a single cell at the top right of the README, which
-reads `The URL to share with participants will appear here after publishing` until
-the app has been opened once.
+researcher fills in. It goes in cell `A10` of the README, written in bold on a pale yellow
+ground so a researcher can find it again, and the app writes nothing else there:
+the rest of that tab is written by hand in the template. A workbook with
+no README tab, which is what a developer building from scratch has, simply gets no
+link written.
 
 ### 3.2 StudySettings
 

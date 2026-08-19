@@ -3,7 +3,8 @@
 // Author(s): Gabriel Mongefranco
 // Created: 2026-07-09
 // Last Modified: 2026-08-18
-// Summary: Server-side Apps Script; serves the web app and reads/writes sleep events to the bound Google Sheet.
+// Summary: Server-side Apps Script; declares the workbook layout, creates whatever part of it is
+//   missing, serves the web app, and checks participant logins.
 // Notes: See README file for documentation and full license information.
 //
 // Copyright © 2026 The Regents of the University of Michigan
@@ -41,6 +42,9 @@
  *     hidden       True for helper tabs the researcher never opens.
  *     frozenRows   Rows locked at the top of the worksheet.
  *     appendOnly   True where the app adds rows over time, so the tab starts empty.
+ *     providedByTemplate  True for a tab the template workbook already ships. The app never
+ *                  creates it and never writes prose into it; whatever it writes there is
+ *                  named separately in the entry.
  *     columns[]    Left to right, starting at column A.
  *       header     The literal text of the header cell. This is the stored column name, and
  *                  it must never change once a study exists.
@@ -52,10 +56,11 @@
  *                  changed them on purpose.
  *     blocks[]     Only on `_calc`: the fixed working tables the charts read. See there.
  *
- * Two things are deliberately over-provisioned. QuestionsSetup always holds twenty rows, and
- * EMA always holds twenty answer columns, even though version 1 ships eight questions. Adding
- * a column after studies exist would mean every researcher editing their own workbook by
- * hand, so the space is claimed now, while it is free.
+ * QuestionsSetup is deliberately over-provisioned: it always holds twenty rows, even though
+ * version 1 ships eight questions. Survey answers are stored as rows on SurveyAnswers rather
+ * than as columns, so a new question changes no tab's shape and costs nothing. What twenty
+ * limits is charting, because the questions table on `_calc` reserves one row per slot and a
+ * chart range has to be a constant.
  */
 
 /** Layout version stamped into StudySettings. Raise it only for a change that makes an
@@ -72,9 +77,10 @@ const SCHEMA_VERSION = 1;
 const BOOL_YES = 'Yes';
 const BOOL_NO = 'No';
 
-/** How many question rows QuestionsSetup always holds, and how many `EMA_` answer columns the
- *  EMA tab always holds. The two are the same number by design: one answer column per
- *  possible question, so a spare question can be put to use without changing the EMA tab. */
+/** How many question rows QuestionsSetup always holds, and how many rows the questions table
+ *  on the `_calc` tab reserves for charting. The two are the same number by design: one chart
+ *  row per possible question, so a spare question can be put to use without any tab changing
+ *  shape. */
 const QUESTION_SLOT_COUNT = 20;
 
 /** Where the participant filter sits on the Dashboard tab, and what it holds. The filter is
@@ -87,13 +93,21 @@ const DASHBOARD_FILTER_LABEL = 'Show data for:';
 const DASHBOARD_FILTER_ALL = 'ALL';
 const DASHBOARD_FIRST_CHART_ROW = 3;
 
-/** Where the live web app link is written on the README tab, and what stands there until the
- *  app has been opened once. The link is an output, not a setting, so it does not belong on a
- *  tab a researcher fills in; it sits at the top of the first thing they read instead. */
-const README_URL_ROW = 1;
-const README_URL_COLUMN = 6;
-const README_URL_PLACEHOLDER =
-  'The URL to share with participants will appear here after publishing';
+/** Where the live web app link is written on the README tab, and how it is picked out. The
+ *  link is an output rather than a setting, so it does not belong on a tab a researcher fills
+ *  in; it goes into the one cell the README reserves for it, and the app touches nothing else
+ *  on that tab. Bold on a pale yellow ground because this is the one thing on the page a
+ *  researcher comes back to look for. The tint is light enough to leave black text on it far
+ *  above the contrast the text needs. */
+const README_URL_ROW = 10;
+const README_URL_COLUMN = 1;
+const README_URL_BACKGROUND = '#fff8e1';
+
+/** Script properties recording what has already been done, so that opening the app does not
+ *  repeat work that only needs doing once. Provisioning walks nine tabs and costs dozens of
+ *  round trips to the spreadsheet; participants should not pay that on every page load. */
+const PROVISIONED_PROPERTY = 'workbook_provisioned_schema_version';
+const WEBAPP_URL_PROPERTY = 'webapp_url_recorded';
 
 /** Fixed dimensions of the hidden `_calc` tab. Chart ranges are constants written once
  *  because these never change: fourteen nights of history, seven days of the week, and one
@@ -104,9 +118,12 @@ const CALC_WEEKDAY_ROWS = 7;
 const CALC_QUESTION_ROWS = QUESTION_SLOT_COUNT;
 
 /** Answer types a question may use. How each is stored is in the architecture specification,
- *  section 3.4: `time` is an ISO 8601 local time with an offset, and every other type is a
- *  whole number. */
-const ANSWER_TYPES = ['time', 'duration_minutes', 'count', 'ordinal', 'scale', 'binary'];
+ *  section 3.4: `time` and `datetime` are ISO 8601 local times with an offset, `boolean` is
+ *  written as Yes or No, and every other type is a whole number. There is no free-text type,
+ *  and there never will be: open text invites a participant to type names, appointments, or
+ *  diagnoses, and every one of those would land in the researcher's workbook. */
+const ANSWER_TYPES =
+  ['time', 'datetime', 'duration_minutes', 'count', 'ordinal', 'scale', 'boolean'];
 
 /** How a rating question is presented: `slider` for wide rating scales, `buttons` where every
  *  option is worth showing, `stepper` for counts and durations. Empty for a time question,
@@ -117,14 +134,27 @@ const INPUT_STYLES = ['slider', 'buttons', 'stepper'];
  *  the participant may change; the marker itself is never overwritten from the answer. */
 const PREFILL_SOURCES = ['SLEEP_MARKER', 'WAKE_MARKER'];
 
+/** How a survey finished. `skipped` means it was shown and declined, which is a real finding
+ *  about engagement rather than missing data, and `abandoned` means the app closed part way
+ *  through. Without the distinction, both look identical to data loss. */
+const END_REASONS = ['submitted', 'skipped', 'abandoned'];
+
+/** Who wrote a question: the shipped default set, the researcher, or, in the standalone build
+ *  only, the participant. */
+const QUESTION_SOURCES = ['default', 'researcher', 'participant'];
+
 /**
- * Question and answer-column ID for slot `n`, zero-padded to two digits, as in `EMA_01`.
+ * Question ID for slot `n`, zero-padded to two digits, as in `Q01`.
+ *
+ * The numbers match the item numbers of the Consensus Sleep Diary, so `Q03` is item 3 and the
+ * workbook can be read without a codebook. They are fixed forever: every stored answer names
+ * its question by this ID and by nothing else.
  *
  * @param {number} n Slot number, 1 through QUESTION_SLOT_COUNT.
  * @return {string} The question ID.
  */
 function questionId_(n) {
-  return 'EMA_' + (n < 10 ? '0' + n : String(n));
+  return 'Q' + (n < 10 ? '0' + n : String(n));
 }
 
 /**
@@ -133,7 +163,7 @@ function questionId_(n) {
  * The default set is the Consensus Sleep Diary, Core version (Carney et al., 2012), which is
  * widely treated as the standard daily sleep diary in sleep research. Using a published
  * instrument means results can be compared with other studies instead of being trapped in
- * this tool. Question numbers match the item numbers of the instrument, so `EMA_03` is item 3
+ * this tool. Question numbers match the item numbers of the instrument, so `Q03` is item 3
  * and the workbook can be read without a codebook. That numbering is permanent.
  *
  * Items 2 and 6 ask for the same two moments the SLEEP and WAKE buttons already record. Both
@@ -147,6 +177,10 @@ function questionId_(n) {
  * Leaving the field out removes that risk rather than managing it. Participants who want to
  * write things down use the private notes feature, which never leaves their device.
  *
+ * Every shipped question is optional. A participant who cannot remember one answer should be
+ * able to submit the rest of the night rather than guess, and a researcher who needs a
+ * particular item answered marks it required themselves.
+ *
  * TODO: The wording below is provisional and must be settled before any study starts, because
  * a deployed copy never updates. Permission to redistribute the Consensus Sleep Diary wording
  * inside a GPL-licensed tool is not yet confirmed with its authors, and it is not yet settled
@@ -158,55 +192,35 @@ function questionId_(n) {
  */
 function buildQuestionDefaultRows_() {
   const rows = [
-    ['EMA_01', 'What time did you get into bed?',
-      'time', '', '', '', '', '', '', '', BOOL_YES, 1],
-    ['EMA_02', 'What time did you try to go to sleep?',
-      'time', '', '', '', '', '', '', 'SLEEP_MARKER', BOOL_YES, 2],
-    ['EMA_03', 'How long did it take you to fall asleep?',
-      'duration_minutes', 0, 600, 'stepper', '', '', 'minutes', '', BOOL_YES, 3],
+    ['Q01', 'What time did you get into bed?',
+      'time', '', '', '', '', '', '', '', BOOL_NO, BOOL_YES, 1],
+    ['Q02', 'What time did you try to go to sleep?',
+      'time', '', '', '', '', '', '', 'SLEEP_MARKER', BOOL_NO, BOOL_YES, 2],
+    ['Q03', 'How long did it take you to fall asleep?',
+      'duration_minutes', 0, 600, 'stepper', '', '', 'minutes', '', BOOL_NO, BOOL_YES, 3],
     // Zero is a real and common answer, and it is what makes a night with no awakenings
     // distinguishable from a night nobody answered for. The top of the range is a clinical
     // judgement rather than a true ceiling: past about ten awakenings, what matters is that
     // the night was badly broken, not the exact count, so the app offers the top value as
     // "10 or more".
-    ['EMA_04', 'How many times did you wake up, not counting your final awakening?',
-      'count', 0, 10, 'stepper', '', '', 'times', '', BOOL_YES, 4],
-    ['EMA_05', 'In total, how long did these awakenings last?',
-      'duration_minutes', 0, 600, 'stepper', '', '', 'minutes', '', BOOL_YES, 5],
-    ['EMA_06', 'What time was your final awakening?',
-      'time', '', '', '', '', '', '', 'WAKE_MARKER', BOOL_YES, 6],
-    ['EMA_07', 'What time did you get out of bed for the day?',
-      'time', '', '', '', '', '', '', '', BOOL_YES, 7],
-    ['EMA_08', 'How would you rate the quality of your sleep?',
-      'ordinal', 1, 5, 'buttons', 'Very poor', 'Very good', '', '', BOOL_YES, 8]
+    ['Q04', 'How many times did you wake up, not counting your final awakening?',
+      'count', 0, 10, 'stepper', '', '', 'times', '', BOOL_NO, BOOL_YES, 4],
+    ['Q05', 'In total, how long did these awakenings last?',
+      'duration_minutes', 0, 600, 'stepper', '', '', 'minutes', '', BOOL_NO, BOOL_YES, 5],
+    ['Q06', 'What time was your final awakening?',
+      'time', '', '', '', '', '', '', 'WAKE_MARKER', BOOL_NO, BOOL_YES, 6],
+    ['Q07', 'What time did you get out of bed for the day?',
+      'time', '', '', '', '', '', '', '', BOOL_NO, BOOL_YES, 7],
+    ['Q08', 'How would you rate the quality of your sleep?',
+      'ordinal', 1, 5, 'buttons', 'Very poor', 'Very good', '', '', BOOL_NO, BOOL_YES, 8]
   ];
 
   // The remaining slots ship empty and hidden. They exist so that a researcher can add a
   // question by filling in a row, rather than by adding a column to a workbook already in use.
   for (let n = rows.length + 1; n <= QUESTION_SLOT_COUNT; n++) {
-    rows.push([questionId_(n), '', '', '', '', '', '', '', '', '', BOOL_NO, n]);
+    rows.push([questionId_(n), '', '', '', '', '', '', '', '', '', BOOL_NO, BOOL_NO, n]);
   }
   return rows;
-}
-
-/**
- * The twenty `EMA_` answer columns of the EMA tab, one per question slot, always all twenty
- * whether or not the matching question is in use. EMA-CleanR picks answer columns up by their
- * `EMA_` prefix and ignores every column that does not carry it.
- *
- * @return {Array<Object>} Column declarations, in slot order.
- */
-function emaAnswerColumns_() {
-  const columns = [];
-  for (let n = 1; n <= QUESTION_SLOT_COUNT; n++) {
-    columns.push({
-      header: questionId_(n),
-      width: 110,
-      note: 'Answer to question ' + questionId_(n) + ' on the QuestionsSetup tab. Empty when '
-        + 'that question was not shown, or was not answered.'
-    });
-  }
-  return columns;
 }
 
 const WORKBOOK = {
@@ -215,21 +229,21 @@ const WORKBOOK = {
     {
       name: 'README',
       purpose: 'How to deploy, and where to go next. The only tab the template workbook ships '
-        + 'with. The app writes the live link into it and changes nothing else.',
+        + 'with. The app writes the live link into one cell and changes nothing else.',
       hidden: false,
       frozenRows: 0,
       appendOnly: false,
+      providedByTemplate: true,
       columns: [],
       defaultRows: [],
 
       /*
-       * The one cell the app writes on this tab: the live web app link, at the top right,
-       * where a researcher opening the workbook for the first time will see it. Until the app
-       * has been opened once, the cell explains why it is empty. Everything else on this tab
-       * is prose the researcher may reformat freely.
+       * The one cell the app writes on this tab: the live web app link. Everything else here
+       * is prose maintained by hand in the template, which is why the app neither creates this
+       * tab nor writes anything else onto it.
        */
       webAppUrlCell: { row: README_URL_ROW, column: README_URL_COLUMN },
-      webAppUrlPlaceholder: README_URL_PLACEHOLDER
+      webAppUrlBackground: README_URL_BACKGROUND
     },
 
     {
@@ -247,7 +261,7 @@ const WORKBOOK = {
         { header: 'questions_locked', width: 130,
           note: 'Yes once a participant has submitted a survey, set by the app. After that, '
             + 'changing the wording of a question makes two different questions share one '
-            + 'column, and nothing in the data can tell those answers apart later.' },
+            + 'ID, and nothing in the data can tell those answers apart later.' },
         { header: 'questions_locked_at', width: 170,
           note: 'When the questions were locked, in UTC. Set by the app.' },
         { header: 'edit_window_days', width: 140,
@@ -270,12 +284,12 @@ const WORKBOOK = {
       appendOnly: false,
       columns: [
         { header: 'question_id', width: 100,
-          note: 'Fixed forever, and also the name of the matching answer column on the EMA '
-            + 'tab. Never change one.' },
+          note: 'Fixed forever. Every stored answer names its question by this ID and by '
+            + 'nothing else, so changing one would orphan the answers already given.' },
         { header: 'display_text', width: 420,
           note: 'The wording the participant reads. Settle it before your study starts: once '
-            + 'anyone has answered, changing the wording puts two different questions into one '
-            + 'column.' },
+            + 'anyone has answered, changing the wording puts two different questions under '
+            + 'one ID.' },
         { header: 'answer_type', width: 140,
           note: 'One of: ' + ANSWER_TYPES.join(', ') + '.' },
         { header: 'min_value', width: 90,
@@ -295,6 +309,10 @@ const WORKBOOK = {
           note: 'Fills the answer in from a marker the participant already tapped: '
             + PREFILL_SOURCES.join(' or ') + '. Leave it empty for every other question. The '
             + 'participant can change a pre-filled answer, and the marker stays as it was.' },
+        { header: 'required', width: 90,
+          note: 'Yes or No. A required question must be answered before the survey can be '
+            + 'submitted, and cannot be hidden. Every question ships as No, so that somebody '
+            + 'who cannot remember one answer can still submit the rest of the night.' },
         { header: 'visible', width: 90,
           note: 'Yes to ask this question, No to leave it out.' },
         { header: 'sort_order', width: 100,
@@ -319,8 +337,9 @@ const WORKBOOK = {
           note: 'A randomly assigned ID. Never a name, a set of initials, a date of birth, or '
             + 'a medical record number.' },
         { header: 'enabled', width: 90,
-          note: 'Yes or No. Set it to No to end access for this person while keeping their '
-            + 'data.' },
+          note: 'Type Yes to let this person log in, or No to end their access while keeping '
+            + 'their data. A row with this cell left empty cannot log in: access is granted '
+            + 'only where somebody has said so.' },
         { header: 'pin_hash', width: 260,
           note: 'Written by the app when the participant first sets a PIN. To reset a '
             + 'forgotten or locked PIN, clear this cell, pin_salt, and failed_attempts. The '
@@ -371,7 +390,7 @@ const WORKBOOK = {
         { header: 'sleep_day', width: 110,
           note: 'Which night this marker belongs to, filled in by the app. A night that starts '
             + 'after midnight counts as the previous day, so a 01:30 bedtime and the 07:00 '
-            + 'wake that follows it share one value. Join to the EMA tab on this column.' },
+            + 'wake that follows it share one value. Join to the Surveys tab on this column.' },
         { header: 'edited', width: 80,
           note: 'Yes if the participant corrected the time after first recording it.' },
         { header: 'modified_utc', width: 200,
@@ -389,45 +408,140 @@ const WORKBOOK = {
     },
 
     {
-      name: 'EMA',
-      purpose: 'Daily survey responses, one row per completed survey, written by the app. The '
-        + 'first four column names are spelled the way the EMA-CleanR analysis script needs.',
+      name: 'Surveys',
+      purpose: 'One row per survey shown, whether or not anything was answered, written by the '
+        + 'app. The answers themselves are on the SurveyAnswers tab, joined on survey_id.',
       hidden: false,
       frozenRows: 1,
       appendOnly: true,
       columns: [
+        { header: 'survey_id', width: 240,
+          note: 'The ID the device gave this survey when it opened. Join to the SurveyAnswers '
+            + 'tab on this column.' },
+        { header: 'study_id', width: 100,
+          note: 'The study this survey belongs to.' },
         { header: 'participant_id', width: 130,
-          note: 'Who answered. Spelled the same way here as on the SleepDiary and '
-            + 'ParticipantsSetup tabs, so one column name means one thing across the whole '
-            + 'workbook.' },
-        { header: 'surveyname', width: 200,
-          note: 'The study ID followed by _sleep_diary, for example STUDY1_sleep_diary. '
-            + 'EMA-CleanR groups rows by this column.' },
-        { header: 'start_datetime', width: 200,
-          note: 'When the participant opened the survey.' },
-        { header: 'end_datetime', width: 200,
-          note: 'When the participant submitted it.' }
-      ].concat(emaAnswerColumns_(), [
+          note: 'Who answered.' },
+        { header: 'sleep_day', width: 110,
+          note: 'Which night this survey describes. Join to the SleepDiary tab on this column. '
+            + 'It is not the day the survey was answered: a survey filled in on Tuesday '
+            + 'morning describes Monday night.' },
+        { header: 'sleep_record_id', width: 240,
+          note: 'The SLEEP marker for that night, if there was one.' },
+        { header: 'wake_record_id', width: 240,
+          note: 'The WAKE marker that opened the survey.' },
+        { header: 'wake_marker_utc', width: 200,
+          note: 'When WAKE was tapped, in UTC.' },
+        { header: 'survey_opened_utc', width: 200,
+          note: 'When the first question appeared, in UTC.' },
+        { header: 'survey_ended_utc', width: 200,
+          note: 'When the participant submitted or skipped, in UTC. Empty if the survey was '
+            + 'abandoned part way through.' },
+        { header: 'survey_duration_ms', width: 150,
+          note: 'Ended minus opened, in milliseconds. Stored so the tab reads without a '
+            + 'formula.' },
+        { header: 'end_reason', width: 120,
+          note: 'How the survey finished: ' + END_REASONS.join(', ') + '. Skipped means it was '
+            + 'shown and declined, which is a real finding about engagement; abandoned means '
+            + 'the app closed part way through. Without these, both look like missing data.' },
+        { header: 'question_count', width: 130,
+          note: 'How many questions were shown. This is how many SurveyAnswers rows to expect '
+            + 'for this survey.' },
+        { header: 'answered_count', width: 130,
+          note: 'How many of those questions were answered.' },
+        { header: 'skipped_count', width: 120,
+          note: 'question_count minus answered_count.' },
+        { header: 'edit_count_total', width: 140,
+          note: 'How many answers were changed before the survey was submitted.' },
         { header: 'question_set_hash', width: 150,
           note: 'A short fingerprint of the questions as they were worded when this survey was '
             + 'answered. If wording ever does change, this is how you tell the affected rows '
             + 'apart instead of mixing them together.' },
-        { header: 'sleep_day', width: 110,
-          note: 'Which night this survey describes. Join to the SleepDiary tab on this column. '
-            + 'It is not the same as the day the survey was answered.' },
-        { header: 'study_id', width: 100,
-          note: 'The study this survey belongs to, spelled out so this tab can be filtered '
-            + 'and joined without taking the study apart from surveyname.' },
+        { header: 'event_tz', width: 170,
+          note: 'The time zone the participant was in at the time, for example '
+            + 'America/Detroit.' },
+        { header: 'tz_offset_minutes', width: 150,
+          note: 'The offset from UTC in force when the survey opened. Stored as well as the '
+            + 'zone name because daylight saving edges and later revisions to the time zone '
+            + 'database both reinterpret history; this pins what the offset actually was.' },
         { header: 'record_id', width: 240,
-          note: 'The ID the device gave this survey, so that a resend updates this row instead '
-            + 'of adding a second one.' },
+          note: 'The same value as survey_id, so that a resend updates this row instead of '
+            + 'adding a second one.' },
         { header: 'received_utc', width: 200,
           note: 'When this row reached the workbook, in UTC.' },
         { header: 'source', width: 90,
           note: 'How the row arrived, for example web.' },
         { header: 'app_version', width: 110,
           note: 'Which version of the app sent it.' }
-      ]),
+      ],
+      defaultRows: []
+    },
+
+    {
+      name: 'SurveyAnswers',
+      purpose: 'One row per question shown, per survey, written by the app. Answers are rows '
+        + 'rather than one column per question, so that a question can be added without any '
+        + 'tab changing shape, and so that a question shown but not answered stays '
+        + 'distinguishable from one nobody was asked.',
+      hidden: false,
+      frozenRows: 1,
+      appendOnly: true,
+      columns: [
+        { header: 'record_id', width: 240,
+          note: 'The ID the device gave this answer.' },
+        { header: 'survey_id', width: 240,
+          note: 'Join to the Surveys tab on this column.' },
+        { header: 'study_id', width: 100,
+          note: 'Repeated here so that this tab can be filtered on its own.' },
+        { header: 'participant_id', width: 130,
+          note: 'Repeated here for the same reason.' },
+        { header: 'question_id', width: 100,
+          note: 'Which question this answers. Join to the QuestionsSetup tab on this column.' },
+        { header: 'question_source', width: 140,
+          note: 'Who wrote the question: ' + QUESTION_SOURCES.join(', ') + '.' },
+        { header: 'answer_type', width: 140,
+          note: 'The answer type as it was shown, one of: ' + ANSWER_TYPES.join(', ') + '.' },
+        { header: 'question_text_shown', width: 420,
+          note: 'The wording the participant actually read, copied in at the time. Use this '
+            + 'rather than display_text on the QuestionsSetup tab: if a question was reworded '
+            + 'part way through a study, this is the only record of what each person read.' },
+        { header: 'required', width: 90,
+          note: 'Whether the question was required at the moment it was shown.' },
+        { header: 'display_order', width: 130,
+          note: 'Where the question appeared in the survey.' },
+        { header: 'answer_order', width: 130,
+          note: 'The order the question was actually answered in. Empty if it was not '
+            + 'answered. A survey answered strictly bottom to top looks different from one '
+            + 'filled in carefully, and nothing else records that.' },
+        { header: 'value', width: 200,
+          note: 'The answer as a person reads it: a clock time with its offset, a whole '
+            + 'number, or Yes or No.' },
+        { header: 'value_number', width: 130,
+          note: 'The same answer as a single number, so that every question type can be '
+            + 'analysed the same way. A time is minutes from local midnight.' },
+        { header: 'value_unit', width: 110,
+          note: 'What value_number counts: hh:mm, minutes, points, the unit set for the '
+            + 'question, or empty.' },
+        { header: 'answered_utc', width: 200,
+          note: 'When the answer was first given, in UTC. Empty means the question was shown '
+            + 'and not answered, which is not the same as a question nobody was asked: that '
+            + 'one has no row at all.' },
+        { header: 'edited_utc', width: 200,
+          note: 'When the answer was last changed before the survey was submitted, in UTC. '
+            + 'Empty if it was never changed.' },
+        { header: 'edit_count', width: 110,
+          note: 'How many times the answer was changed.' },
+        { header: 'time_to_answer_ms', width: 160,
+          note: 'From the question appearing to the first answer, in milliseconds. A survey '
+            + 'answered in eight seconds looks different from one filled in carefully, and '
+            + 'this cannot be worked out after the fact.' },
+        { header: 'received_utc', width: 200,
+          note: 'When this row reached the workbook, in UTC.' },
+        { header: 'source', width: 90,
+          note: 'How the row arrived, for example web.' },
+        { header: 'app_version', width: 110,
+          note: 'Which version of the app sent it.' }
+      ],
       defaultRows: []
     },
 
@@ -554,23 +668,29 @@ const WORKBOOK = {
         {
           name: 'questions',
           namedRange: 'calcQuestions',
-          purpose: 'One row per question slot, averaged over the same fourteen nights. Feeds '
-            + 'the survey answer chart.',
+          purpose: 'One row per question slot, averaged over the same fourteen nights. Built '
+            + 'from the SurveyAnswers tab with AVERAGEIFS and COUNTIFS over question_id, so a '
+            + 'question nobody was asked simply has no answer rows to average. Feeds the '
+            + 'survey answer chart.',
           headerRow: 29,
           firstDataRow: 30,
           rowCount: CALC_QUESTION_ROWS,
           columns: [
             { header: 'question_id',
-              note: 'EMA_01 through EMA_20, in order.' },
+              note: questionId_(1) + ' through ' + questionId_(QUESTION_SLOT_COUNT)
+                + ', in order.' },
             { header: 'display_text',
               note: 'The wording, copied from QuestionsSetup for the chart labels.' },
             { header: 'visible',
               note: 'Yes or No, copied from QuestionsSetup. Hidden questions are not charted.' },
             { header: 'average_value',
-              note: 'Average answer over the fourteen nights. Empty for a time question, which '
-                + 'is not averaged this way.' },
+              note: 'Average of value_number on the SurveyAnswers tab over the fourteen '
+                + 'nights, worked out with AVERAGEIFS over question_id. Empty for a time '
+                + 'question, which is not averaged this way: clock time runs on a circle, so '
+                + 'an ordinary average of 23:50 and 00:10 lands at midday.' },
             { header: 'response_count',
-              note: 'How many surveys answered this question.' }
+              note: 'How many surveys answered this question, counted with COUNTIFS over the '
+                + 'same column.' }
           ]
         }
       ]
@@ -578,27 +698,40 @@ const WORKBOOK = {
   ]
 };
 
-const SHEET_NAME = 'SleepDiary';
-const SETUP_SHEET = 'Setup';
 const APP_VERSION = '1.0.0';
 const EDIT_WINDOW_DAYS = 7; // How far back in history is the user allowed to edit entries
 
-const HEADERS = [
-  'record_id', 'study_id', 'participant_id', 'event_type', 'event_epoch_ms',
-  'event_iso_utc', 'event_tz', 'event_local', 'created_at_iso', 'updated_at_iso',
-  'edited', 'source', 'app_version'
-];
+/*
+ * ### Serving the App ###
+ */
 
-// Setup tab layout: URL to Share with Participants | Active Study ID | Active Participant IDs
-const SETUP_COL_URL = 1;
-const SETUP_COL_STUDY = 2;
-const SETUP_COL_PARTICIPANTS = 3;
-const SETUP_DATA_ROW = 2; // first row below the header
-const DEFAULT_STUDY_ID = 'STUDY1';
-const DEFAULT_PARTICIPANT_IDS = ['P01', 'P02', 'P03'];
-
+/**
+ * Entry point for the published web app.
+ *
+ * The workbook is brought up to the declared layout before the page is served, so the app is
+ * never handed to a participant over a spreadsheet it cannot write to safely.
+ *
+ * @param {Object} e The Apps Script event object for this request.
+ * @return {HtmlOutput} The app page, or a short explanation if the workbook was not recognised.
+ */
 function doGet(e) {
+  let provisioned;
+  try {
+    provisioned = ensureWorkbook_();
+  } catch (err) {
+    // The message names a tab and a column, never participant data. The researcher has to read
+    // it to put the workbook right, so it is shown as well as logged.
+    console.error('MiNap Go provisioning stopped: ' + (err && err.message));
+    return workbookProblemPage_(err);
+  }
+
   recordWebAppUrl_(); // save the shareable link into the Sheet on first open
+
+  // The open that builds the workbook is the researcher's own, moments after deploying. They
+  // need the spreadsheet next, to add participants, so that open gets a way there instead of
+  // a login screen they have nobody to log in as yet.
+  if (provisioned) return setupCompletePage_();
+
   var output = HtmlService.createTemplateFromFile('Index')
     .evaluate()
     .setTitle('MiNap Go')
@@ -616,18 +749,143 @@ function doGet(e) {
   return output;
 }
 
-// Write the live web app URL into the Setup tab so the researcher never loses it.
-// The URL is only known in web-app context, so this runs on app open, not deploy.
+/**
+ * Includes one of this project's HTML files inside another. The trailing underscore keeps it
+ * off the public interface: every function without one can be called from any browser, and
+ * this one returns file contents.
+ *
+ * @param {string} filename Name of the HTML file in this Apps Script project.
+ * @return {string} The file's contents.
+ */
+function include_(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+/**
+ * The page shown instead of the app when the workbook is not laid out the way this code
+ * expects. It says what to do and nothing else: no stack trace, no internal paths, no data.
+ *
+ * @param {Error} err The problem provisioning reported.
+ * @return {HtmlOutput} A short page for whoever opened the link.
+ */
+function workbookProblemPage_(err) {
+  const detail = escapeHtml_(String((err && err.message) || 'The workbook could not be read.'));
+  const page =
+    '<div lang="en" style="font-family: system-ui, Verdana, sans-serif; font-size: 1rem; '
+    + 'line-height: 1.6; max-width: 40em; margin: 2rem auto; padding: 0 1rem;">'
+    + '<h1 style="font-size: 1.4rem;">This sleep diary is not ready yet</h1>'
+    + '<p>Nothing has been changed, and no entries have been lost. Please tell your study team '
+    + 'what this page says.</p>'
+    + '<p>' + detail + '</p>'
+    + '</div>';
+  return HtmlService.createHtmlOutput(page)
+    .setTitle('MiNap Go')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/**
+ * The page shown on the one open that builds the workbook, in place of the login screen.
+ *
+ * It offers a link rather than sending the browser onwards by itself. An Apps Script page runs
+ * inside a sandboxed frame on another origin, so it cannot navigate the window it sits in, and
+ * a pop-up opened without a click is what a pop-up blocker exists to stop. A link also fails
+ * safely: nothing tells this code who is looking, so if somebody other than the researcher
+ * opens the deployment first, they get a link they cannot follow rather than being sent to a
+ * permission error on a spreadsheet that is not theirs.
+ *
+ * @return {HtmlOutput} A short page pointing at the spreadsheet.
+ */
+function setupCompletePage_() {
+  let spreadsheetUrl = '';
+  try {
+    spreadsheetUrl = getSpreadsheet_().getUrl();
+  } catch (e) {
+    console.warn('MiNap Go could not read the spreadsheet URL: ' + (e && e.message));
+  }
+
+  let webAppUrl = '';
+  try {
+    webAppUrl = ScriptApp.getService().getUrl();
+  } catch (e) {
+    console.warn('MiNap Go could not read the published web app URL: ' + (e && e.message));
+  }
+
+  // A solid colour rather than the app's gradient button: white on the gradient's light end
+  // measures below the 4.5:1 needed for text this size, and this label is normal text.
+  const action = spreadsheetUrl
+    ? '<p><a href="' + escapeHtml_(spreadsheetUrl) + '" target="_blank" rel="noopener" '
+      + 'style="display: inline-block; background: #4c4b8a; color: #fff; font-weight: 700; '
+      + 'text-decoration: none; padding: 14px 22px; min-height: 44px; border-radius: 14px;">'
+      + 'Open the spreadsheet to add participants</a></p>'
+    : '<p>Open your MiNap Go spreadsheet to add your participants.</p>';
+
+  // The address is set out on its own line rather than run into the sentence, because it is
+  // meant to be copied. Long addresses wrap inside the box instead of pushing the page wider,
+  // which is what would otherwise force a phone to scroll sideways.
+  const share = webAppUrl
+    ? '<p style="margin-top: 2.5rem;">Share the following address with your participants once '
+      + 'that is done. They will see the sleep diary, not this message, which appears only on '
+      + 'the open that builds the workbook.</p>'
+      + '<p style="font-weight: 700; overflow-wrap: anywhere;">'
+      + escapeHtml_(webAppUrl) + '</p>'
+    : '<p style="margin-top: 2.5rem;">Share the address of this page with your participants '
+      + 'once that is done. They will see the sleep diary, not this message, which appears '
+      + 'only on the open that builds the workbook.</p>';
+
+  const page =
+    '<div lang="en" style="font-family: system-ui, Verdana, sans-serif; font-size: 1rem; '
+    + 'line-height: 1.6; max-width: 40em; margin: 2rem auto; padding: 0 1rem;">'
+    + '<h1 style="font-size: 1.4rem;">Your app was deployed successfully</h1>'
+    + '<p>The spreadsheet now has every tab MiNap Go needs. The next step is to add your '
+    + 'participants, one row each on the ParticipantsSetup tab, with <strong>Yes</strong> in '
+    + 'the <strong>enabled</strong> column.</p>'
+    + action
+    + share
+    + '</div>';
+
+  return HtmlService.createHtmlOutput(page)
+    .setTitle('MiNap Go')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/**
+ * Writes the live web app URL into the cell the README tab reserves for it, so that the
+ * researcher never has to go looking for the link. The URL is only knowable in web app
+ * context, which is why this runs when the app is opened rather than when it is deployed.
+ *
+ * It writes once. The URL that was last written is remembered in a script property, so a page
+ * load that has nothing to say costs one property read and no work in the spreadsheet at all.
+ * Redeploying produces a new URL, which no longer matches what was remembered, and is written.
+ *
+ * The README tab belongs to the template and is maintained by hand. If it is absent, as it is
+ * in a workbook a developer built from scratch, there is nowhere to put the link and this does
+ * nothing. Failing here never blocks the app either: whoever opened the deployment already has
+ * the URL, so refusing to serve the page over it would be worse than the problem.
+ */
 function recordWebAppUrl_() {
   let url;
-  try { url = ScriptApp.getService().getUrl(); } catch (e) { return; }
+  try {
+    url = ScriptApp.getService().getUrl();
+  } catch (e) {
+    console.warn('MiNap Go could not read the published web app URL: ' + (e && e.message));
+    return;
+  }
   if (!url) return; // not running as a published web app
+
+  const properties = PropertiesService.getScriptProperties();
+  if (properties.getProperty(WEBAPP_URL_PROPERTY) === url) return; // already written
+
+  const tab = tabDeclaration_('README');
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(3000)) return; // busy; a later open will record it
   try {
-    const sh = ensureSetupSheet_();
-    const cell = sh.getRange(SETUP_DATA_ROW, SETUP_COL_URL);
-    if (cell.getValue() !== url) cell.setValue(url); // keep current
+    const sh = getSpreadsheet_().getSheetByName(tab.name);
+    if (!sh) return; // no README tab in this workbook; nothing to write into
+    const cell = sh.getRange(tab.webAppUrlCell.row, tab.webAppUrlCell.column);
+    if (cell.getValue() !== url) {
+      cell.setValue(url).setFontWeight('bold').setBackground(tab.webAppUrlBackground);
+    }
+    properties.setProperty(WEBAPP_URL_PROPERTY, url);
   } catch (e) {
     // non-fatal; never block the app over URL bookkeeping
   } finally {
@@ -635,197 +893,438 @@ function recordWebAppUrl_() {
   }
 }
 
-// Auto-provision the Setup tab: the shareable URL plus the Study ID / Participant ID allowlist.
-// Placed right after the README tab (if present) so sheet order is README, Setup, SleepDiary.
-function ensureSetupSheet_() {
+/*
+ * ### Provisioning The Workbook ###
+ *
+ * Creating what is missing, and nothing else. Provisioning never clears a tab, never deletes a
+ * row, and never moves a column. A researcher's participant list and their charts cannot be
+ * recovered once they are gone, so a shape this code does not recognise is a reason to stop
+ * and say so, never a reason to repair by deletion.
+ */
+
+/**
+ * Brings the workbook up to the declared layout. It creates what is missing and leaves
+ * everything else exactly as it was.
+ *
+ * This runs once per layout version, not once per page load. Walking nine tabs costs dozens of
+ * round trips to the spreadsheet, and a participant opening the app should not wait for work
+ * that has already been done. A script property remembers which layout version was built; a
+ * later release that raises the version does not match it and walks the workbook again.
+ *
+ * The property is set only after a walk finishes, so a workbook that stopped part way through
+ * is retried on the next open rather than left half built.
+ *
+ * To rebuild a tab somebody deleted, run this function from the Apps Script editor. The
+ * trailing underscore keeps it away from browsers, not away from the Run menu.
+ *
+ * TODO: logMarker and logSurvey must find each column by its header text at the moment they
+ * write, rather than trusting the positions in the declaration. Nothing checks the layout
+ * between one open and the next, so a column moved or removed by hand is only detectable by
+ * the operation that would otherwise write into the wrong place.
+ *
+ * @return {boolean} True if this call walked the workbook, which happens on one open per
+ *     layout version. False when the work was already done, or when another request holds the
+ *     lock and is doing it instead.
+ * @throws {Error} If a tab exists in a shape the declaration does not describe, or if the
+ *     workbook was built to a different layout version.
+ */
+function ensureWorkbook_() {
+  const properties = PropertiesService.getScriptProperties();
+  if (properties.getProperty(PROVISIONED_PROPERTY) === String(SCHEMA_VERSION)) return false;
+
   const ss = getSpreadsheet_();
-  let sh = ss.getSheetByName(SETUP_SHEET);
-  if (sh) return sh;
-
-  const readme = ss.getSheetByName('README');
-  sh = ss.insertSheet(SETUP_SHEET, readme ? readme.getIndex() : 0);
-
-  sh.getRange(1, SETUP_COL_URL).setValue('URL to Share with Participants');
-  sh.getRange(1, SETUP_COL_STUDY).setValue('Active Study ID')
-    .setNote('Change this to your actual Study ID. This must be given to participants during enrollment.');
-  sh.getRange(1, SETUP_COL_PARTICIPANTS).setValue('Active Participant IDs')
-    .setNote('Enter your participant IDs below, one per row. Only the IDs listed here will be allowed to use the app.');
-  sh.getRange(1, 1, 1, 3).setFontWeight('bold');
-  sh.setFrozenRows(1);
-
-  sh.getRange(SETUP_DATA_ROW, SETUP_COL_STUDY).setValue(DEFAULT_STUDY_ID);
-  sh.getRange(SETUP_DATA_ROW, SETUP_COL_PARTICIPANTS, DEFAULT_PARTICIPANT_IDS.length, 1)
-    .setValues(DEFAULT_PARTICIPANT_IDS.map(function (id) { return [id]; }));
-
-  sh.setColumnWidth(SETUP_COL_URL, 460);
-  sh.setColumnWidth(SETUP_COL_STUDY, 140);
-  sh.setColumnWidth(SETUP_COL_PARTICIPANTS, 140);
-  return sh;
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(30000)) {
+    // Another open is already provisioning. Two passes at once is the only real hazard here,
+    // so standing aside is the correct answer rather than merely the convenient one.
+    console.warn('MiNap Go provisioning skipped: another request holds the lock.');
+    return false;
+  }
+  try {
+    assertSchemaVersion_(ss);
+    WORKBOOK.tabs.forEach(function (tab, position) {
+      // A tab the template ships is the researcher's to lay out. Anything the app puts on one
+      // is written by the code that owns that value, not by provisioning.
+      if (tab.providedByTemplate) return;
+      ensureTab_(ss, tab, position);
+    });
+    properties.setProperty(PROVISIONED_PROPERTY, String(SCHEMA_VERSION));
+    return true;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
-// Case-insensitive check of studyId/participantId against the Setup tab's allowlist.
-function isValidParticipant_(studyId, participantId) {
-  if (!studyId || !participantId) return false;
-  const sh = ensureSetupSheet_();
+/**
+ * Stops if the workbook was built to a different layout version. A deployed copy of the app
+ * never updates itself, so there is no migration path: writing rows of one layout into a
+ * workbook built for another would put two layouts in one file, which is exactly the failure
+ * the version stamp exists to prevent.
+ *
+ * A workbook with no StudySettings tab yet, or an empty version cell, is a new one.
+ *
+ * @param {Spreadsheet} ss The workbook.
+ * @throws {Error} If the stored version is neither empty nor the version this code writes.
+ */
+function assertSchemaVersion_(ss) {
+  const tab = tabDeclaration_('StudySettings');
+  const sh = ss.getSheetByName(tab.name);
+  if (!sh || sh.getLastRow() < 2) return;
 
-  const study = String(sh.getRange(SETUP_DATA_ROW, SETUP_COL_STUDY).getValue() || '').trim().toUpperCase();
-  if (!study || String(studyId).trim().toUpperCase() !== study) return false;
+  const column = headerPosition_(tab, 'schema_version');
+  if (String(sh.getRange(1, column).getValue() || '').trim() !== 'schema_version') {
+    return; // the header pass reports a mislaid column, and does it with more detail
+  }
 
-  const lastRow = sh.getLastRow();
-  if (lastRow < SETUP_DATA_ROW) return false;
-  const ids = sh.getRange(SETUP_DATA_ROW, SETUP_COL_PARTICIPANTS, lastRow - SETUP_DATA_ROW + 1, 1)
-    .getValues()
-    .map(function (r) { return String(r[0] || '').trim().toUpperCase(); })
-    .filter(function (v) { return v; });
-  return ids.indexOf(String(participantId).trim().toUpperCase()) !== -1;
+  const stored = String(sh.getRange(2, column).getValue() || '').trim();
+  if (!stored || Number(stored) === SCHEMA_VERSION) return;
+
+  throw new Error('This workbook uses MiNap Go layout ' + stored + ', and this copy of the app '
+    + 'writes layout ' + SCHEMA_VERSION + '. Nothing has been changed. Use the copy of the app '
+    + 'that matches your workbook, or start a new study from a fresh copy of the template.');
 }
 
-// Client-callable: check a Study ID / Participant ID before letting the login screen proceed.
-// Returns a plain value rather than throwing, so "invalid" and "can't reach the server"
-// stay distinguishable on the client instead of both landing in a thrown-error channel.
+/**
+ * Creates one tab if it is missing, and brings whatever is on it up to the declaration.
+ *
+ * @param {Spreadsheet} ss The workbook.
+ * @param {Object} tab One entry from WORKBOOK.tabs.
+ * @param {number} position Zero-based position the tab should take, from the declared order.
+ * @throws {Error} If the tab exists in a shape the declaration does not describe.
+ */
+function ensureTab_(ss, tab, position) {
+  let sh = ss.getSheetByName(tab.name);
+  if (!sh) {
+    sh = ss.insertSheet(tab.name, Math.min(position, ss.getNumSheets()));
+    // Hidden at creation only. A researcher who unhides _calc to read a formula should not
+    // find it hidden again the next time the app is opened.
+    if (tab.hidden) sh.hideSheet();
+  }
+  if (tab.frozenRows && sh.getFrozenRows() !== tab.frozenRows) sh.setFrozenRows(tab.frozenRows);
+
+  if (tab.columns && tab.columns.length) ensureTable_(sh, tab);
+  if (tab.blocks) ensureCalcBlocks_(ss, sh, tab);
+  if (tab.filterCell) ensureDashboardControls_(sh, tab);
+}
+
+/**
+ * Writes any missing headers on an ordinary tab, and its default rows if the tab is new.
+ *
+ * @param {Sheet} sh The worksheet.
+ * @param {Object} tab One entry from WORKBOOK.tabs.
+ * @throws {Error} If the header row holds something the declaration does not describe.
+ */
+function ensureTable_(sh, tab) {
+  const wasEmpty = sh.getLastRow() === 0;
+  const matched = ensureHeaderRow_(sh, tab.name, 1, tab.columns);
+
+  for (let i = matched; i < tab.columns.length; i++) {
+    if (tab.columns[i].width) sh.setColumnWidth(i + 1, tab.columns[i].width);
+  }
+
+  // Default rows are a starting point rather than a setting the app owns. A researcher may
+  // have changed or deleted one deliberately, so they are written once and never restored.
+  if (wasEmpty && tab.defaultRows && tab.defaultRows.length) {
+    sh.getRange(2, 1, tab.defaultRows.length, tab.columns.length).setValues(tab.defaultRows);
+  }
+}
+
+/**
+ * Compares one header row against its declaration and fills in whatever is missing from the
+ * right-hand end.
+ *
+ * Columns are only ever appended. A declared column missing from the middle is reported
+ * instead of inserted, because inserting one would move every value beside it one cell across
+ * and quietly put each participant's data under the wrong heading.
+ *
+ * @param {Sheet} sh The worksheet.
+ * @param {string} tabName Worksheet name, used in the message if this stops.
+ * @param {number} rowIndex Which row holds the headers.
+ * @param {Array<Object>} columns Declared columns, left to right.
+ * @return {number} How many columns already matched, so the caller can format the new ones.
+ * @throws {Error} If any cell holds something other than the header declared for it.
+ */
+function ensureHeaderRow_(sh, tabName, rowIndex, columns) {
+  const width = Math.max(columns.length, sh.getLastColumn());
+  const existing = sh.getRange(rowIndex, 1, 1, width).getValues()[0]
+    .map(function (v) { return String(v == null ? '' : v).trim(); });
+
+  // Nothing may sit to the right of the declared columns. A header there means this is not
+  // the table this code thinks it is.
+  for (let i = columns.length; i < existing.length; i++) {
+    if (existing[i] !== '') throw shapeError_(tabName, rowIndex, i + 1, '(empty)', existing[i]);
+  }
+
+  let matched = 0;
+  while (matched < columns.length && existing[matched] === columns[matched].header) matched++;
+  if (matched === columns.length) return matched;
+
+  // Everything from the first unmatched column onwards has to be free. A cell holding some
+  // other header means a column was renamed, reordered, or taken out of the middle.
+  for (let i = matched; i < columns.length; i++) {
+    if (existing[i] !== '') {
+      throw shapeError_(tabName, rowIndex, i + 1, columns[i].header, existing[i]);
+    }
+  }
+
+  const headers = [];
+  for (let i = matched; i < columns.length; i++) headers.push(columns[i].header);
+  sh.getRange(rowIndex, matched + 1, 1, headers.length)
+    .setValues([headers])
+    .setFontWeight('bold');
+  for (let i = matched; i < columns.length; i++) {
+    if (columns[i].note) sh.getRange(rowIndex, i + 1).setNote(columns[i].note);
+  }
+  return matched;
+}
+
+/**
+ * Writes the header row of each working table on the `_calc` tab, and names the range each
+ * chart reads. The rows a block occupies are fixed in the declaration so that a chart range is
+ * a constant; a chart that worked out its own range would break in a study's first week, when
+ * there are fewer than fourteen nights to draw.
+ *
+ * @param {Spreadsheet} ss The workbook, which is what owns a named range.
+ * @param {Sheet} sh The `_calc` worksheet.
+ * @param {Object} tab The `_calc` entry from WORKBOOK.tabs.
+ * @throws {Error} If a block's header row holds something the declaration does not describe.
+ */
+function ensureCalcBlocks_(ss, sh, tab) {
+  const taken = {};
+  ss.getNamedRanges().forEach(function (nr) { taken[nr.getName()] = true; });
+
+  tab.blocks.forEach(function (block) {
+    ensureHeaderRow_(sh, tab.name + ' (' + block.name + ')', block.headerRow, block.columns);
+    if (!taken[block.namedRange]) {
+      ss.setNamedRange(block.namedRange,
+        sh.getRange(block.headerRow, 1, 1 + block.rowCount, block.columns.length));
+    }
+  });
+}
+
+/**
+ * Puts the participant filter on the Dashboard tab. Written only into cells that are empty, so
+ * that a researcher's own filter value survives every later open.
+ *
+ * @param {Sheet} sh The Dashboard worksheet.
+ * @param {Object} tab The Dashboard entry from WORKBOOK.tabs.
+ */
+function ensureDashboardControls_(sh, tab) {
+  const label = sh.getRange(tab.filterLabelCell.row, tab.filterLabelCell.column);
+  if (String(label.getValue() || '') === '') {
+    label.setValue(tab.filterLabel).setFontWeight('bold');
+  }
+
+  const filter = sh.getRange(tab.filterCell.row, tab.filterCell.column);
+  if (String(filter.getValue() || '') === '') {
+    filter.setValue(tab.filterDefault).setNote(tab.filterNote);
+  }
+}
+
+/*
+ * ### Participant Login ###
+ */
+
+/**
+ * Client-callable: check a Study ID and Participant ID before letting the login screen
+ * proceed.
+ *
+ * Returns a plain value rather than throwing, so that "not on the list" and "could not reach
+ * the server" stay distinguishable on the client instead of both arriving as a thrown error.
+ *
+ * @param {string} studyId The Study ID typed by the participant.
+ * @param {string} participantId The Participant ID typed by the participant.
+ * @return {{valid: boolean}} Whether this pair may log in.
+ */
 function validateLogin(studyId, participantId) {
   return { valid: isValidParticipant_(studyId, participantId) };
 }
 
-// Client-callable: expose settings the UI needs without hardcoding a second copy of the constant.
+/**
+ * Client-callable: the settings the interface needs, so that no constant is copied into the
+ * client and left to drift.
+ *
+ * @return {{editWindowDays: number, appVersion: string}} The settings.
+ */
 function getConfig() {
   return { editWindowDays: EDIT_WINDOW_DAYS, appVersion: APP_VERSION };
 }
 
-function include_(filename) {
-  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+/**
+ * Whether a Study ID and Participant ID pair is listed on ParticipantsSetup and enabled.
+ *
+ * The pair is checked together, never the Participant ID on its own: several studies can share
+ * one workbook, and an ID leaked from one study must not work in another. Comparison ignores
+ * surrounding spaces and letter case, because somebody typing their ID on a phone should not
+ * be turned away over a capital letter.
+ *
+ * Access is granted only where somebody has written Yes. An empty `enabled` cell denies the
+ * login: an unanswered question about access is not permission.
+ *
+ * @param {string} studyId The Study ID to check.
+ * @param {string} participantId The Participant ID to check.
+ * @return {boolean} True only if the pair is listed and enabled.
+ */
+function isValidParticipant_(studyId, participantId) {
+  if (!studyId || !participantId) return false;
+
+  const tab = tabDeclaration_('ParticipantsSetup');
+  const sh = getSpreadsheet_().getSheetByName(tab.name);
+  if (!sh) return false;
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return false; // header row only: nobody is enrolled yet
+
+  const studyColumn = headerPosition_(tab, 'study_id');
+  const participantColumn = headerPosition_(tab, 'participant_id');
+  const enabledColumn = headerPosition_(tab, 'enabled');
+  const width = Math.max(studyColumn, participantColumn, enabledColumn);
+  const rows = sh.getRange(2, 1, lastRow - 1, width).getValues();
+
+  const wantedStudy = normalizeId_(studyId);
+  const wantedParticipant = normalizeId_(participantId);
+
+  for (let i = 0; i < rows.length; i++) {
+    if (normalizeId_(rows[i][studyColumn - 1]) !== wantedStudy) continue;
+    if (normalizeId_(rows[i][participantColumn - 1]) !== wantedParticipant) continue;
+    return isYes_(rows[i][enabledColumn - 1]);
+  }
+  return false;
 }
 
-// Resolve the target spreadsheet. Bound script uses its own Sheet (no ID needed);
-// standalone deployments fall back to a SPREADSHEET_ID script property.
+/*
+ * ### Helpers ###
+ */
+
+/**
+ * Resolves the workbook this deployment writes to: the one the script is attached to, and no
+ * other.
+ *
+ * There is deliberately no way to name a different spreadsheet by ID. Opening a workbook by ID
+ * requires permission over every spreadsheet in the researcher's Drive, and this app only ever
+ * needs the one it lives in. Keeping the narrower permission is worth more than a deployment
+ * route nobody uses: both documented routes attach the script to the workbook.
+ *
+ * @return {Spreadsheet} The workbook this deployment writes to.
+ * @throws {Error} If the script is not attached to a spreadsheet.
+ */
 function getSpreadsheet_() {
   const bound = SpreadsheetApp.getActiveSpreadsheet();
   if (bound) return bound;
-  const id = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
-  if (id) return SpreadsheetApp.openById(id);
-  throw new Error('No spreadsheet. Bind this script to a Sheet, or set a SPREADSHEET_ID script property.');
+  throw new Error('This script is not attached to a spreadsheet. Open your MiNap Go workbook, '
+    + 'choose Extensions and then Apps Script, and deploy from there.');
 }
 
-// Auto-provision the data sheet and headers on first use; recreate headers if the schema drifted.
-// Always created right after the Setup tab, so sheet order is README, Setup, SleepDiary.
-function ensureSheet_() {
-  const ss = getSpreadsheet_();
-  let sh = ss.getSheetByName(SHEET_NAME);
-  if (!sh) {
-    const setupSh = ensureSetupSheet_();
-    sh = ss.insertSheet(SHEET_NAME, setupSh.getIndex());
+/**
+ * Looks a tab up in the declaration by name.
+ *
+ * @param {string} name The worksheet name.
+ * @return {Object} The declaration entry.
+ * @throws {Error} If the name is not declared, which can only be a mistake in this file.
+ */
+function tabDeclaration_(name) {
+  for (let i = 0; i < WORKBOOK.tabs.length; i++) {
+    if (WORKBOOK.tabs[i].name === name) return WORKBOOK.tabs[i];
   }
-  const firstRow = sh.getRange(1, 1, 1, HEADERS.length).getValues()[0];
-  if (firstRow.join('') !== HEADERS.join('')) {
-    sh.clear();
-    sh.getRange(1, 1, 1, HEADERS.length).setValues([HEADERS]);
-    sh.setFrozenRows(1);
+  throw new Error('No tab named ' + name + ' is declared in WORKBOOK.');
+}
+
+/**
+ * Where a named column sits on a tab, counting from 1. Reading the position out of the
+ * declaration rather than writing a number into the code is what keeps column order in one
+ * place.
+ *
+ * @param {Object} tab A declaration entry.
+ * @param {string} header The column's header text.
+ * @return {number} The column number.
+ * @throws {Error} If the column is not declared, which can only be a mistake in this file.
+ */
+function headerPosition_(tab, header) {
+  for (let i = 0; i < tab.columns.length; i++) {
+    if (tab.columns[i].header === header) return i + 1;
   }
-  return sh;
+  throw new Error('No column named ' + header + ' is declared on the ' + tab.name + ' tab.');
 }
 
-// Append one Sleep or Wake event. Returns { invalid: true } if the study/participant ID
-// isn't on the Setup tab's allowlist (checked as a plain return value, not a thrown error,
-// so the client can reliably tell "invalid" apart from "request failed").
-function logEvent(payload) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(20000);
-  try {
-    if (!payload || !isValidParticipant_(payload.study_id, payload.participant_id)) {
-      return { invalid: true };
-    }
-    validateEvent_(payload);
-    const sh = ensureSheet_();
-    const nowIso = new Date().toISOString();
-    const row = [
-      payload.record_id,
-      String(payload.study_id).trim().toUpperCase(),
-      String(payload.participant_id).trim().toUpperCase(),
-      payload.event_type,
-      Number(payload.event_epoch_ms),
-      payload.event_iso_utc,
-      payload.event_tz,
-      payload.event_local,
-      nowIso,
-      '',
-      'FALSE',
-      'web',
-      payload.app_version || APP_VERSION
-    ];
-    sh.appendRow(row);
-    return { invalid: false, row: rowToObj_(row) };
-  } finally {
-    lock.releaseLock();
+/**
+ * The error raised when a worksheet is not laid out the way the declaration describes. It
+ * names what was expected and what was found, because a person has to put the workbook right
+ * by hand, and it says plainly that nothing was changed.
+ *
+ * @param {string} tabName Which worksheet.
+ * @param {number} rowIndex Which row the headers are on.
+ * @param {number} columnIndex Which column, counting from 1.
+ * @param {string} expected The header that belongs there.
+ * @param {string} found What is there instead.
+ * @return {Error} The error to throw.
+ */
+function shapeError_(tabName, rowIndex, columnIndex, expected, found) {
+  const shown = found.length > 50 ? found.substring(0, 50) + '...' : found;
+  return new Error('The ' + tabName + ' tab is not laid out the way this app expects. Row '
+    + rowIndex + ', column ' + columnLetter_(columnIndex) + ' should read "' + expected
+    + '" but reads "' + shown + '". Nothing has been changed. Put that header back, or start a '
+    + 'new study from a fresh copy of the template.');
+}
+
+/**
+ * Spreadsheet column letter for a column number, so that a message can say "column C" rather
+ * than "column 3".
+ *
+ * @param {number} columnIndex Column number, counting from 1.
+ * @return {string} The column letter or letters.
+ */
+function columnLetter_(columnIndex) {
+  let letters = '';
+  let remaining = columnIndex;
+  while (remaining > 0) {
+    const remainder = (remaining - 1) % 26;
+    letters = String.fromCharCode(65 + remainder) + letters;
+    remaining = Math.floor((remaining - remainder) / 26);
   }
+  return letters;
 }
 
-// Edit an existing Sleep/Wake event's date & time. Only entries within the edit window
-// (based on their currently stored time, not the proposed new one) may be changed.
-// Returns { invalid: true } (rather than throwing) if the study/participant ID isn't
-// on the Setup tab's allowlist; still throws for genuinely unexpected/structural problems.
-function updateEvent(req) {
-  const lock = LockService.getScriptLock();
-  lock.waitLock(20000);
-  try {
-    if (!req || !req.record_id) throw new Error('Missing record_id');
-    if (!req.event_epoch_ms || isNaN(Number(req.event_epoch_ms))) throw new Error('Bad timestamp');
-    if (!isValidParticipant_(req.study_id, req.participant_id)) return { invalid: true };
-
-    const sh = ensureSheet_();
-    const lastRow = sh.getLastRow();
-    if (lastRow < 2) throw new Error('Record not found');
-
-    const studyU = String(req.study_id).trim().toUpperCase();
-    const partU = String(req.participant_id).trim().toUpperCase();
-    const values = sh.getRange(2, 1, lastRow - 1, HEADERS.length).getValues();
-
-    for (let i = 0; i < values.length; i++) {
-      const row = values[i];
-      // Match on study/participant too, so no one can edit another participant's row by guessing a record_id.
-      if (String(row[0]) === String(req.record_id) &&
-          String(row[1]).trim().toUpperCase() === studyU &&
-          String(row[2]).trim().toUpperCase() === partU) {
-        assertWithinWindow_(Number(row[4])); // gate on the currently stored time
-        const sheetRow = i + 2; // +1 for the header row, +1 for 1-based indexing
-        sh.getRange(sheetRow, 5).setValue(Number(req.event_epoch_ms));  // event_epoch_ms
-        sh.getRange(sheetRow, 6).setValue(req.event_iso_utc || '');     // event_iso_utc
-        sh.getRange(sheetRow, 7).setValue(req.event_tz || row[6]);      // event_tz
-        sh.getRange(sheetRow, 8).setValue(req.event_local || '');       // event_local
-        sh.getRange(sheetRow, 10).setValue(new Date().toISOString());  // updated_at_iso
-        sh.getRange(sheetRow, 11).setValue('TRUE');                    // edited
-        const updatedRow = sh.getRange(sheetRow, 1, 1, HEADERS.length).getValues()[0];
-        return { invalid: false, row: rowToObj_(updatedRow) };
-      }
-    }
-    throw new Error('Record not found');
-  } finally {
-    lock.releaseLock();
-  }
+/**
+ * Reads a yes-or-no cell loosely. The app writes only the words Yes and No, but a person or a
+ * spreadsheet may leave a checkbox, a number, or a different casing behind, and a researcher
+ * who typed "yes" must not silently have said no.
+ *
+ * An empty cell is not a yes. It means nobody has said yet, which callers treat as they need.
+ *
+ * @param {*} value The raw cell value.
+ * @return {boolean} True only for an affirmative value.
+ */
+function isYes_(value) {
+  if (value === true) return true;
+  if (value === false || value == null) return false;
+  const text = String(value).trim().toLowerCase();
+  return text === 'yes' || text === 'true' || text === '1';
 }
 
-// ----- v2 stub: add a missing time within the edit window (not yet implemented) -----
-function addEvent(payload) {
-  throw new Error('Not implemented in v1');
+/**
+ * Trims a Study or Participant ID and puts it in one letter case, so that a comparison does
+ * not depend on how it was typed. Used for comparison only; what the workbook holds stays
+ * exactly as the researcher entered it.
+ *
+ * @param {*} value The raw ID.
+ * @return {string} The comparable form.
+ */
+function normalizeId_(value) {
+  return String(value == null ? '' : value).trim().toUpperCase();
 }
 
-// ----- helpers -----
-function assertWithinWindow_(epochMs) {
-  const ageDays = (Date.now() - Number(epochMs)) / 86400000;
-  if (ageDays > EDIT_WINDOW_DAYS) {
-    throw new Error('Edit window expired (older than ' + EDIT_WINDOW_DAYS + ' days)');
-  }
-}
-
-function validateEvent_(p) {
-  if (!p || !p.record_id) throw new Error('Missing record_id');
-  if (!p.study_id || !p.participant_id) throw new Error('Missing study or participant id');
-  if (p.event_type !== 'SLEEP' && p.event_type !== 'WAKE') throw new Error('Bad event_type');
-  if (!p.event_epoch_ms || isNaN(Number(p.event_epoch_ms))) throw new Error('Bad timestamp');
-}
-
-function rowToObj_(row) {
-  const o = {};
-  for (let i = 0; i < HEADERS.length; i++) o[HEADERS[i]] = row[i];
-  o.event_epoch_ms = Number(o.event_epoch_ms);
-  return o;
+/**
+ * Escapes text for insertion into HTML, so that a value read out of the workbook can be shown
+ * on a page without any of it being treated as markup.
+ *
+ * @param {string} text The text to escape.
+ * @return {string} The escaped text.
+ */
+function escapeHtml_(text) {
+  return String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }

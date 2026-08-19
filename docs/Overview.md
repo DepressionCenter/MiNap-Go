@@ -1,6 +1,6 @@
 <!--
 This file is part of MiNap Go.
-README.md
+docs/overview.md
 Author(s): Gabriel Mongefranco (@gabrielmongefranco), Abhiram V. (@abhiramvsmg)
 Created: 2026-06-25
 Last Modified: 2026-08-18
@@ -27,24 +27,33 @@ MiNap Go is a standalone, ready-to-run browser-based sleep diary for research st
 - Privacy-first - Data lives in the researcher's own Google Drive
 - Simple interface - Just two buttons: Sleep and Wake
 - Timestamped events - Each tap records exact time
-- Access control - Only enrolled participants with valid IDs can log data
+- Access control - Only participants the researcher has enrolled can log data
 
 ## Architecture
 
 ### System Flow
 
 1. Participant opens web app URL and enters Study ID and Participant ID
-2. App validates ID against Setup tab in Google Sheet
+2. App checks the pair against the ParticipantsSetup tab in the Google Sheet
 3. Participant taps Sleep or Wake button
 4. Apps Script records timestamp to Google Sheet
 5. Researcher reviews data in the Sheet
+
+The Sheet has a tab for each kind of data. For what every tab and column holds, read
+[the data dictionary](./data-dictionary.md). For why it is built this way, read
+[the architecture specification](./architecture.md).
+
+**Planned.** Steps 3 and 4 are being rebuilt for the new tabs. In the current code the app
+creates the tabs and checks logins, but does not yet record taps or diary answers. Use the
+last released copy for a live study until that work lands.
 
 ### Security
 
 - Runs as the deploying researcher
 - Data is stored in the researcher's own Google Drive
+- The app asks for access to the one spreadsheet it is attached to, not to your Drive
 - Each study has its own Google Sheet
-- Participant IDs must be pre-approved in Setup tab
+- Participants must be listed on the ParticipantsSetup tab before they can log in, and a study ID from one study will not work in another
 - Participants can write data but cannot read or modify the Sheet directly. Sleep diary history that is vieweable by participants comes from the web app itself (browser cache), not the Sheet. That means if the participants clear their browser cache, log off from the app, or switch devices, they will lose access to their sleep diary history. The researcher can still view all data in the Sheet.
 
 ## Quick Start Guide
@@ -58,28 +67,38 @@ MiNap Go is a standalone, ready-to-run browser-based sleep diary for research st
 2. Copy the template sheet: https://docs.google.com/spreadsheets/d/1oygo0kEPhFN6bKEcw8wE7RhUb_JM3K7jTiy6z6Hv8rg/copy
 3. Go to Extensions > Apps Script > Deploy > New deployment > Web app
 4. Set: Execute as = Me, Who has access = Anyone
-5. Click Deploy and authorize (click Advanced > Go to MiNap Go if warned)
-6. Open the web app URL once - Setup tab appears
-7. Replace default Study ID and Participant IDs with yours. Only participant IDs listed in the Setup tab will be able to log in. Participant IDs should be randomized (not sequential) and not personally identifiable.
+5. Click Deploy and authorize (click Advanced > Go to MiNap Go if warned).
+
+   MiNap Go asks for one permission: to see and edit **the spreadsheet it is attached to**, and no other. It cannot open, read, or change any other file in your Drive. If the screen you see asks for more than that, stop and tell the Mobile Technologies Core.
+6. Open the web app URL once. The app creates the rest of the tabs it needs, writes the link to share into cell A10 of the README tab, and shows you a setup page with a link straight to the spreadsheet. This happens once, so later opens are fast and participants never see that page.
+7. Add a row to the ParticipantsSetup tab for each participant: your Study ID, their Participant ID, and `Yes` in the `enabled` column. Participant IDs should be randomly assigned, not sequential, and never a name, initials, a date of birth, or a medical record number.
 8. Share URL with participants
 
 ## Troubleshooting
 
 ### "Invalid Participant ID"
-- Verify ID is in Setup tab list
-- Check for typos (case-sensitive)
+
+- Check that the Study ID and the Participant ID both appear on the same row of the ParticipantsSetup tab. They are checked together.
+- Check that the `enabled` column on that row says `Yes`. A blank cell does not grant access.
+- Check for typos.
 
 ### Data Not Appearing
-- Open web app URL once first
-- Check Sheet is not read-only
 
-### "Invalid Participant ID"
-- Verify ID is in Setup tab list
-- Check for typos (case-sensitive)
+- Open the web app URL once first, so the tabs are created.
+- Check the Sheet is not read-only.
 
-### Data Not Appearing
-- Open web app URL once first
-- Check Sheet is not read-only
+### A tab is missing, or was deleted by mistake
+
+The app builds the tabs once and then stops checking, so deleting one does not bring it
+back on the next page load. To rebuild it: open **Extensions > Apps Script**, choose
+`ensureWorkbook_` from the function list, and click **Run**. It creates whatever is
+missing and leaves every existing tab alone.
+
+### "This sleep diary is not ready yet"
+
+The app found a tab whose columns are not the ones it expects, and stopped rather than
+writing into it. Nothing was changed. The message names the tab and the column. Put that
+header back, or start a new study from a fresh copy of the template.
 
 
 ## Contributing
