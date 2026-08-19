@@ -251,7 +251,7 @@ const WORKBOOK = {
       name: 'StudySettings',
       purpose: 'Settings that apply to the whole workbook: one header row, and one row of '
         + 'values under it.',
-      hidden: false,
+      hidden: true,
       frozenRows: 1,
       appendOnly: false,
       columns: [
@@ -341,21 +341,22 @@ const WORKBOOK = {
           note: 'Type Yes to let this person log in, or No to end their access while keeping '
             + 'their data. A row with this cell left empty cannot log in: access is granted '
             + 'only where somebody has said so.' },
-        { header: 'pin_hash', width: 260,
+        { header: 'pin_hash', width: 260, hidden: true,
           note: 'Written by the app when the participant first sets a PIN. To reset a '
             + 'forgotten or locked PIN, clear this cell, pin_salt, and failed_attempts. The '
             + 'participant is then asked to choose a new PIN at the next login, and the copy '
             + 'of their history on their own device becomes unreadable. The workbook keeps '
-            + 'the record, so nothing is lost to the study.' },
-        { header: 'pin_salt', width: 200,
+            + 'the record, so nothing is lost to the study. Hidden by default; select its '
+            + 'column by name in the Name Box, or unhide columns D:H, to edit it by hand.' },
+        { header: 'pin_salt', width: 200, hidden: true,
           note: 'A random value for this participant alone, written with the PIN. Clear it as '
             + 'part of a PIN reset.' },
-        { header: 'pin_set_at', width: 170,
+        { header: 'pin_set_at', width: 170, hidden: true,
           note: 'When the PIN was set, in UTC. Written by the app.' },
-        { header: 'failed_attempts', width: 130,
+        { header: 'failed_attempts', width: 130, hidden: true,
           note: 'How many wrong PINs in a row. Back to zero after a correct one. Clear it as '
             + 'part of a PIN reset.' },
-        { header: 'locked', width: 90,
+        { header: 'locked', width: 90, hidden: true,
           note: 'Yes once there have been too many wrong PINs in a row. To unlock, clear '
             + 'pin_hash, pin_salt, and failed_attempts, which starts PIN setup again.' }
       ],
@@ -1036,8 +1037,11 @@ function ensureTable_(sh, tab) {
   const wasEmpty = sh.getLastRow() === 0;
   const matched = ensureHeaderRow_(sh, tab.name, 1, tab.columns);
 
+  // Only for columns this call is creating for the first time: a researcher who unhides one
+  // of these to read or edit it by hand should not find it hidden again on a later open.
   for (let i = matched; i < tab.columns.length; i++) {
     if (tab.columns[i].width) sh.setColumnWidth(i + 1, tab.columns[i].width);
+    if (tab.columns[i].hidden) sh.hideColumns(i + 1);
   }
 
   // Default rows are a starting point rather than a setting the app owns. A researcher may
