@@ -320,6 +320,7 @@ One row per question **shown**, per survey.
 | `survey_id` | Join to Surveys |
 | `study_id` | Repeated here so this tab can be filtered on its own |
 | `participant_id` | Repeated for the same reason |
+| `sleep_day` | Which night the survey this answer belongs to describes, copied from the Surveys row. Repeated here, rather than looked up through `survey_id`, so the `_calc` tab can average one question over a date range on this tab alone |
 | `question_id` | `Q01` through `Q20` |
 | `question_source` | `default`, `researcher`, or `participant` |
 | `answer_type` | The type as it was shown |
@@ -425,6 +426,9 @@ these numbers moves a chart range.
 | `sleep_efficiency_percent` | Time asleep as a percentage of time in bed |
 | `has_sleep_data` | `1` if a marker exists for this night, `0` if not |
 | `has_survey_data` | `1` if a survey was submitted for this night, `0` if not |
+| `sleep_minutes_from_noon` | Internal. This night's `Q02` answer as minutes after noon, read by the weekday table below so a day-of-week average never averages raw clock times across midnight |
+| `wake_minutes_from_midnight` | Internal. This night's `Q06` answer, already anchored on midnight |
+| `weekday_number` | Internal. `WEEKDAY()` of `sleep_day`: `1` for Sunday through `7` for Saturday |
 
 #### weekday
 

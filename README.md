@@ -40,8 +40,8 @@ Want to try it first? Check out the [live demo](https://code.depressioncenter.or
 2. Make a copy of the [MiNap Go template sheet](https://docs.google.com/spreadsheets/d/1oygo0kEPhFN6bKEcw8wE7RhUb_JM3K7jTiy6z6Hv8rg/copy) (if the link doesn't automatically take you to the "copy document" screen, open the sheet, expand the menu, and click **File > Make a copy** to copy it to your own Google Drive). Rename the copy to your study name or study ID.
 3. In your copy, click **Extensions > Apps Script > Deploy > New deployment > Web app**. Set "Execute as" to **Me** and "Who has access" to **Anyone**. Click **Deploy** and authorize the script when prompted.
 4. The first authorization shows a Google "unverified app" screen: click **Advanced**, then "**Go to MiNap Go (unsafe)**". This is expected -- it is your own copy of the script.
-5. Once deployed, you will be given the URL for your new web app. Open that URL once. A **Setup** tab appears in the Sheet with three columns: the web app URL, your Active Study ID, and your Active Participant IDs. Also copy that URL somewhere safe as a backup.
-6. In the **Setup** tab, replace the default Active Study ID (`STUDY1`) with your actual study ID, and replace the sample Active Participant IDs (`P01`, `P02`, `P03`) with your real participant IDs, one per row — only IDs listed there will be able to log in. Give each participant their Study ID and their own Participant ID during enrollment.
+5. Once deployed, you will be given the URL for your new web app. Open that URL once. The app builds every other tab it needs — including **ParticipantsSetup**, **QuestionsSetup**, and the **Dashboard** charts — and writes the same URL into the **README** tab so you can find it again. Also copy that URL somewhere safe as a backup.
+6. On the **ParticipantsSetup** tab, add one row per participant: your study ID, a randomly assigned Participant ID (never a name, initials, a date of birth, or a medical record number), and `Yes` in the **enabled** column — a blank `enabled` cell cannot log in. Give each participant their Study ID and their own Participant ID during enrollment, and have them choose their PIN while you are there; the app asks a new Participant ID to set one the first time it logs in.
 7. Share the URL with participants. To start another study, make another copy of the template Sheet and repeat these steps.
 
 
@@ -61,7 +61,7 @@ You can also deploy the app manually into a blank project if you want to rebuild
 4. **File > New > HTML file**, five times; name them exactly `Index`, `Stylesheet`, `Platform`, `Core`, and `App`, and paste in the matching files from the repo's [`gas`](gas/) folder.
 5. Open Project Settings (gear icon) and enable "Show `appsscript.json` manifest file in editor"; open `appsscript.json`, delete its contents, and paste in this repo's [`gas/appsscript.json`](gas/appsscript.json). (JSON has no comment syntax, so its license notice rides along in a leading `_license` key.)
 6. Click **Deploy > New deployment > Web app**. Set "Execute as" to "Me" to ensure it runs under your account. Set "Who has access" to "Anyone" so participants can access it without a Google account. Authorize the script (as described in the quick start guide).
-7. Open the web app URL once; the shareable URL is written to the **Setup** tab.
+7. Open the web app URL once. The app builds every tab it needs and shows a page with a link straight to the spreadsheet; a blank project built this way has no README tab, so the app shows the shareable URL directly on that page instead of writing it into the Sheet. Copy it from there.
 
 Because the script is created from inside the Sheet, it is bound to that Sheet. All data will be written there, so it is important not to share it with anyone outside your study team or technical support.
 

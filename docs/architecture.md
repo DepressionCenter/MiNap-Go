@@ -517,6 +517,7 @@ answered or not: an unanswered question is one with an empty `value` and an empt
 | `record_id` | Generated on the device |
 | `survey_id` | Join to Surveys |
 | `study_id`, `participant_id` | Repeated so this tab can be filtered on its own |
+| `sleep_day` | Copied from the Surveys row, so the `_calc` tab can average one question over a date range with `AVERAGEIFS` alone, without joining through `survey_id` |
 | `question_id` | `Q01` through `Q20` |
 | `question_source` | `default`, `researcher`, or `participant` |
 | `answer_type` | As shown, from section 3.4 |
@@ -886,30 +887,22 @@ API.
 | Function | Returns |
 |---|---|
 | `doGet` | The app page |
-| `validateLogin` | Whether the login is valid, and whether a PIN is set |
-| `setPin` | Success or failure |
+| `validateLogin` | Whether the login is valid, and whether a PIN is already on file for it |
+| `setPin` | Success or failure. Also handles changing an existing PIN, given the old one |
 | `verifyPin` | Success, failure, or locked |
 | `getConfig` | Question list, edit window, backup reminder interval |
 | `logMarker` | Confirmation only |
 | `logSurvey` | Confirmation only. Writes one Surveys row and its SurveyAnswers rows in one locked operation, so a survey can never exist without its answers or the reverse |
 | `updateMarker` | Confirmation only |
 
-No function returns diary or survey data.
+No function returns diary or survey data. There is no read path in version 1, not
+even one protected by a PIN. Recovery happens through file export and import
+instead.
 
-### Fix required before anything else
-
-The current `Code.gs` contains `getHistory`, which reads the Sheet and returns a
-participant's rows to the browser. It runs on Google's servers under the
-researcher's authorization, not in the browser. Because the deployment is open to
-anyone and the sample IDs are published in the repository and the setup guide,
-anyone can retrieve a participant's diary today.
-
-Delete it. Also rename `include` to `include_` so it is not callable; it returns
-project file contents, which is harmless with public source but is needless
-exposure.
-
-There is no read path in version 1, not even one protected by a PIN. Recovery
-happens through file export and import instead.
+`getHistory`, which once read the Sheet and returned a participant's rows to the
+browser, is gone, and `include` is renamed to `include_` so it is not callable.
+Both were the first fix made in version 1, because the deployment is open to
+anyone and the sample IDs are published in the repository and the setup guide.
 
 ---
 
@@ -1558,10 +1551,11 @@ accepts writes and returns nothing. Researchers get four charts in the Sheet tha
 survive export to Excel; participants get charts in the app drawn without a
 library.
 
-The most urgent item is section 7: `getHistory` currently exposes participant
-diaries to anyone and should be removed before anything else is built. After
-that, the Sheet schema in section 3 should be frozen, because deployed copies
-cannot be updated later.
+`getHistory`, the function that once exposed participant diaries to anyone, is
+gone, and the Sheet schema in section 3 is frozen: every tab, column, server
+function, and chart it describes is built. What remains is section 12's
+participant-facing app -- the screens that call `logMarker`, `logSurvey`, and
+`updateMarker` -- and section 16's standalone build.
 
 ## Additional resources
 

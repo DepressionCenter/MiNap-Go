@@ -33,19 +33,24 @@ MiNap Go is a standalone, ready-to-run browser-based sleep diary for research st
 
 ### System Flow
 
-1. Participant opens web app URL and enters Study ID and Participant ID
-2. App checks the pair against the ParticipantsSetup tab in the Google Sheet
-3. Participant taps Sleep or Wake button
-4. Apps Script records timestamp to Google Sheet
-5. Researcher reviews data in the Sheet
+1. Participant opens web app URL, enters Study ID and Participant ID, and sets or enters a PIN
+2. App checks the pair against the ParticipantsSetup tab in the Google Sheet, and the PIN against
+   the hash stored there
+3. Participant taps Sleep or Wake button, and answers the short morning diary
+4. Apps Script computes which night each marker and survey belongs to and records it to the
+   Google Sheet
+5. Researcher reviews data, and the built-in charts, in the Sheet
 
 The Sheet has a tab for each kind of data. For what every tab and column holds, read
 [the data dictionary](./data-dictionary.md). For why it is built this way, read
 [the architecture specification](./architecture.md).
 
-**Planned.** Steps 3 and 4 are being rebuilt for the new tabs. In the current code the app
-creates the tabs and checks logins, but does not yet record taps or diary answers. Use the
-last released copy for a live study until that work lands.
+**Planned.** Steps 1 through 4 above describe what the server now accepts and stores; the
+server functions behind them (`setPin`, `verifyPin`, `logMarker`, `logSurvey`, `updateMarker`)
+are built and covered by the data dictionary. The participant-facing screens that call them —
+the Sleep and Wake buttons, the morning diary, and the PIN entry screen — are the next piece of
+work and are not wired up yet. Use the last released copy for a live study until that work
+lands.
 
 ### Security
 
@@ -54,6 +59,7 @@ last released copy for a live study until that work lands.
 - The app asks for access to the one spreadsheet it is attached to, not to your Drive
 - Each study has its own Google Sheet
 - Participants must be listed on the ParticipantsSetup tab before they can log in, and a study ID from one study will not work in another
+- A participant also needs the PIN they chose at enrollment. The server checks it before accepting any submission, which is what stops someone logging entries under a Participant ID that is not theirs, and it locks the account after too many wrong guesses in a row
 - Participants can write data but cannot read or modify the Sheet directly. Sleep diary history that is vieweable by participants comes from the web app itself (browser cache), not the Sheet. That means if the participants clear their browser cache, log off from the app, or switch devices, they will lose access to their sleep diary history. The researcher can still view all data in the Sheet.
 
 ## Quick Start Guide

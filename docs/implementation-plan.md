@@ -83,53 +83,91 @@ open and creates what is missing, and the version 0 Setup tab and its code are
 gone, so only one layout exists in the file. `build.py --check` runs on a
 case-sensitive filesystem.
 
-The four charts were not part of this task, and the app cannot write yet: the
-server functions below replace what was deleted.
+**Task 2 — the server functions, `sleep_day`, PINs, and the charts. Done.**
 
-**Remaining deliverables**
-
-- The four charts, created by the provisioning pass using the Apps Script chart
-  builder, against a `_calc` tab whose size is fixed in the declaration.
-- The `_calc` formulas themselves, for all four blocks. The declaration fixes the
-  rows each block occupies and names its range; nothing yet fills them in.
-- `sleep_day` filled in by the server for both marker types, including the lookup
-  that pairs a WAKE to its SLEEP and the recompute when an edit moves a marker
-  across noon. Transcribe the rule from the Sleep Data Automation exactly, in
-  local time, anchored on sleep onset. Section 4 has both forms side by side.
-- A rewritten README tab for the template Sheet. The current text describes a
-  three-column Setup tab and no PIN step.
-- The full timestamp set on both survey tabs: survey opened, ended, and its
-  reason, and per answer the answered time, the last edit, the edit count, and the
-  time taken. None of these can be recovered after the fact.
-- `question_text_shown` written onto every SurveyAnswers row.
-- `Yes` and `No` written into every yes-or-no column, per section 3.10. The loose
-  read is already there in `isYes_`; nothing writes one yet.
-- Every write resolves its columns by header text at the moment it writes, rather
-  than trusting the positions in the declaration. Provisioning runs once per layout
-  version rather than on every open, so nothing else looks at the layout between one
-  open and the next, and a column moved or deleted by hand would otherwise be found
-  only by the row that landed under the wrong heading.
+- `sleep_day` is filled in by the server for both marker types: the noon rule for
+  SLEEP, the backward lookup that pairs a WAKE to the most recent SLEEP at or
+  before it for WAKE, and a recompute of both a moved SLEEP and the WAKE paired to
+  it when an edit crosses noon. `sleepDayFromWallClock_` transcribes the rule from
+  the Sleep Data Automation exactly, in local time, anchored on sleep onset.
+- The four charts are created by the provisioning pass with the Apps Script chart
+  builder (`ensureCharts_`), reading the named ranges on `_calc`, once every other
+  tab exists. The `_calc` formulas themselves (`ensureCalcFormulas_`) are written
+  for all four blocks, using only the Excel-safe function list in section 11:
+  `AVERAGEIFS`, `COUNTIFS`, `MINIFS`, `MAXIFS`, `INDEX`, `MATCH`, `IFERROR`,
+  `TEXT`, and `WEEKDAY`. `SurveyAnswers` carries a `sleep_day` column, copied from
+  its Surveys row at write time, so the questions block can average one question
+  over a date range without a join. Two internal helper columns on `_calc.daily`
+  (`sleep_minutes_from_noon`, `wake_minutes_from_midnight`, `weekday_number`) let
+  the weekday block group by day of week with plain `AVERAGEIFS`/`MINIFS`/
+  `MAXIFS`, without the circular-average error a raw clock-time average would
+  produce. Verify the formulas against a live study, per the checklist below:
+  when the Dashboard filter is `ALL`, a night's derived measures average each
+  question across the group before combining them, rather than combining each
+  participant's own numbers first — identical to the per-participant case, an
+  approximation for the group view.
+- The full timestamp set is written on both survey tabs: survey opened, ended,
+  and its reason, and per answer the answered time, the last edit, the edit
+  count, and the time taken, all supplied by the caller and stored as given.
+- `question_text_shown` is written onto every SurveyAnswers row from the payload.
+- `Yes` and `No` are written into every yes-or-no column this code writes to,
+  using the `BOOL_YES`/`BOOL_NO` constants; `isYes_` still reads the loose forms
+  back.
+- Every write resolves its columns by header text at the moment it writes
+  (`sheetHeaderMap_`, `columnOf_`), rather than trusting the positions in the
+  declaration. `headerPosition_` is kept only for provisioning, where the
+  declaration's order is exactly what is being built or checked. Provisioning
+  runs once per layout version rather than on every open, so nothing else looks
+  at the layout between one open and the next, and a column moved or renamed by
+  hand is still found correctly instead of being read from the wrong position.
 - Server functions: `validateLogin`, `setPin`, `verifyPin`, `getConfig`,
   `logMarker`, `logSurvey`, `updateMarker`. No function returns diary data.
   `logSurvey` writes the Surveys row and its SurveyAnswers rows inside one lock,
-  so neither can exist without the other. It accepts a survey with no answers, and
-  records why.
-- PIN storage with a per-participant random salt, and a lockout counter.
+  so neither can exist without the other. It accepts a survey with no answers,
+  and records why. Every write to SleepDiary, Surveys, or SurveyAnswers is
+  idempotent on its own `record_id`, so a resent submission updates the row it
+  already produced instead of adding a duplicate.
+- PIN storage with a per-participant random salt (`randomPinSalt_`, built on
+  `Utilities.getUuid()`), ten rounds of SHA-256 stretching, and a lockout counter
+  that locks the account after eight wrong PINs in a row. `setPin` also handles
+  changing an existing PIN, given the old one.
 - Documentation updated with the tabs, the columns, and what a researcher edits by
   hand. A manual deployment into a blank Sheet now gets everything, charts
   included, so the developer route and the template route end in the same place.
+
+**Outstanding.** A rewritten README tab for the template Sheet itself. The
+template is a live Google Sheet outside this repository, so this code change
+cannot write it; the current template text still describes a three-column Setup
+tab and no PIN step, and needs updating by hand to match section 3.1 the next
+time the template is touched.
 
 **Done when** a copy of the template with only its README tab builds every other
 tab and all four charts on first open, a participant can be added and can set a
 PIN, a marker and a survey land in the right tabs with matching `sleep_day`
 values, a skipped survey leaves a Surveys row and no answer rows, and a wrong PIN
-locks the account after the set number of tries.
+locks the account after the set number of tries. Everything except the template's
+own README tab has been verified by code review; none of it has been exercised
+against a live Sheet yet (see Verification below).
 
 **Check the sleep day rule against the automation.** Take a bedtime at 11:59,
 another at 12:01, and one at 01:30, and confirm all three land on the day the
 Power Query step in section 4 would give. This is the join key between three tabs
 and it is anchored on local time, so a UTC reading passes casual inspection and is
 wrong for every participant west of Greenwich.
+
+**Verification still needed, against a real deployment.** None of this phase has
+run against a live Google Sheet yet.
+
+- Deploy a fresh copy and confirm every tab, the four charts, and the named
+  ranges appear on first open.
+- Call `logMarker` and `logSurvey` (directly from the Apps Script editor, or once
+  Phase 3 has a client) and confirm rows land with the right `sleep_day`, and
+  that the charts update.
+- Download the workbook as `.xlsx` and open it in Excel, per section 11: Google
+  charts do not always convert perfectly, and this is exactly the kind of thing
+  that only shows up when checked.
+- Confirm `setPin`, `verifyPin`, and the lockout behave as documented, including
+  that a locked account stays locked until a researcher clears the PIN cells.
 
 
 ---
@@ -224,10 +262,14 @@ than as encryption.
 
 ## Conclusion
 
-Phase 1 and Phase 2 task 1 are complete. The workbook layout is now declared in one
-place and built from that declaration, which is the foundation everything after it
-sits on. The next work is the server functions that write to it, and until they
-exist the app can create a workbook but cannot record anything into it.
+Phase 1 and Phase 2 are complete, except for rewriting the template Sheet's own
+README tab by hand (outstanding item above) and the live-deployment verification
+neither this change nor the phase before it has had a chance to run. The workbook
+layout is declared in one place and built from that declaration, and the server
+now records markers and surveys into it, computes `sleep_day`, checks PINs, and
+draws the four researcher charts. The next work is Phase 3: the participant-facing
+screens that call `logMarker`, `logSurvey`, `setPin`, and `updateMarker`, without
+which the server can record data but nothing yet asks it to.
 
 ## Additional resources
 
