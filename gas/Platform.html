@@ -74,4 +74,25 @@ function verifyPin(studyId, participantId, pin, onSuccess, onFailure) {
     .withFailureHandler(onFailure)
     .verifyPin(studyId, participantId, pin);
 }
+
+// Confirms this participant is still enabled and this device's token is still the one on file.
+// Called on entering Home and History, and periodically per SESSION_REVALIDATE_DAYS; a rejected
+// token here never deletes anything locally on its own, it only routes the interface back to a
+// sign-in prompt.
+function checkSession(studyId, participantId, deviceToken, onSuccess, onFailure) {
+  google.script.run
+    .withSuccessHandler(onSuccess)
+    .withFailureHandler(onFailure)
+    .checkSession(studyId, participantId, deviceToken);
+}
+
+// Best-effort: tells the server to forget this device's token on logout. onFailure (offline,
+// etc.) is treated the same as success by every caller -- the local device-session material is
+// what actually needs to go, and that is deleted regardless of whether this call lands.
+function signOutDevice(studyId, participantId, deviceToken, onSuccess, onFailure) {
+  google.script.run
+    .withSuccessHandler(onSuccess)
+    .withFailureHandler(onFailure)
+    .signOutDevice(studyId, participantId, deviceToken);
+}
 </script>

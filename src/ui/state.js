@@ -95,8 +95,9 @@ async function onWake() {
 }
 
 // Drain the offline queue one item at a time; a failure halts the drain until the next call.
-// The real drain engine (idempotent dispatch by kind, never-retry-on-revoke) is Stage 3 -- this
-// keeps today's shape, only made async, so the app keeps running end to end in the meantime.
+// The real drain engine (idempotent dispatch by kind, never-retry-on-revoke) is not implemented
+// yet -- this keeps today's shape, only made async, so the app keeps running end to end in the
+// meantime.
 async function flushQueue() {
   var q = await getQueue();
   if (!q.length) return;

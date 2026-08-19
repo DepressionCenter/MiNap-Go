@@ -5,8 +5,8 @@
 // Last Modified: 2026-08-19
 // Summary: The local identity and encrypted-storage layer. Ties crypto.js and storage.js
 //   together: which IndexedDB record belongs to which participant, unlocking and locking the
-//   in-memory data key and PIN, and reading/writing the encrypted history, queue, and cached
-//   config collections. Nothing above this file reads or writes storage.js directly.
+//   in-memory data key and device token, and reading/writing the encrypted history, queue, and
+//   cached config collections. Nothing above this file reads or writes storage.js directly.
 // Notes: See README file for documentation and full license information.
 //
 // Copyright © 2026 The Regents of the University of Michigan
@@ -21,13 +21,13 @@
 // You should have received a copy of the GNU General Public License along
 // with this program. If not, see <https://www.gnu.org/licenses/>.
 
-// The unwrapped data key and the raw PIN live only here, only in memory, only for as long as
-// the vault is unlocked -- never persisted. The raw PIN has to be held for the session's
-// duration because the server requires it on every single write call (authenticateWrite_ in
-// Code.gs); there is no way around re-sending it. That makes it a broader-impact secret than
-// the data key alone (a leak of this, not just of local data, could write to the server as this
-// participant), even though both live under the same in-page-JS threat model.
-var session = null; // { studyId, participantId, tz, dataKey, pin } | null
+// The unwrapped data key and the device token live only here, only in memory, only for as long
+// as the vault is unlocked -- never persisted as plaintext outside encrypted or non-extractable
+// storage. The PIN itself is never held here at all, at any point: Code.gs's authenticateWrite_
+// checks a device token on every write, not the PIN, so nothing in a session's lifetime ever
+// needs to re-send it. Holding it would only recreate the exposure splitting the two was meant
+// to remove -- a stolen device handing over a secret the participant may have reused elsewhere.
+var session = null; // { studyId, participantId, tz, dataKey, deviceToken } | null
 
 var LAST_IDENTITY_KEY = 'last_identity';
 
@@ -109,18 +109,22 @@ function clearLastIdentity() {
 // Unencrypted is correct here, not a shortcut: this record has to be readable before the PIN is
 // entered, to know whether this device already has a profile for this identity at all. It holds
 // the same class of information architecture.md section 6.1's notes vault stores in the clear
-// for the same reason -- salt, iteration count, wrapped key -- never the PIN itself.
+// for the same reason -- salt, iteration count, wrapped key -- never the PIN itself, and now
+// never the device token in the clear either unless probeCryptoKeyStorage says this browser
+// cannot do better (see establishDeviceSession_ below).
 
 function getProfile(studyId, participantId) {
   return readPlain(collectionKey(studyId, participantId, 'profile'));
 }
 
-function createLocalProfile(studyId, participantId, tz, pin) {
+function createLocalProfile(studyId, participantId, tz, pin, deviceToken) {
   var key = collectionKey(studyId, participantId, 'profile');
+  var newDataKey;
   return readPlain(key).then(function (existing) {
     if (existing) throw new Error('profile_exists');
     return generateDataKey();
   }).then(function (dataKey) {
+    newDataKey = dataKey;
     var salt = randomSalt();
     return deriveWrappingKey(pin, salt, PBKDF2_ITERATIONS).then(function (wrappingKey) {
       return wrapDataKey(dataKey, wrappingKey);
@@ -136,16 +140,22 @@ function createLocalProfile(studyId, participantId, tz, pin) {
         wrapped_key_ciphertext: wrapped.wrapped,
         created_at: now,
         pin_set_at: now
-      }).then(function () {
-        session = { studyId: studyId, participantId: participantId, tz: tz, dataKey: dataKey, pin: String(pin) };
       });
     });
+  }).then(function () {
+    return establishDeviceSession_(studyId, participantId, newDataKey, deviceToken);
+  }).then(function () {
+    session = { studyId: studyId, participantId: participantId, tz: tz,
+      dataKey: newDataKey, deviceToken: String(deviceToken) };
   });
 }
 
-// Attempts a fully local, offline-capable unlock. Returns true/false rather than rejecting on a
-// wrong PIN -- a wrong PIN is an expected outcome here, not an exceptional one.
-function unlockWithPin(studyId, participantId, pin) {
+// Attempts a fully local, PIN-only unwrap of a profile already on this device. Returns
+// true/false rather than rejecting on a wrong PIN -- a wrong PIN is an expected outcome here,
+// not an exceptional one. deviceToken comes from a verifyPin call the caller has already made:
+// unwrapping the data key is local and offline-capable on its own, but only the server can mint
+// a token, so a caller reaching this function is expected to have one in hand already.
+function unlockWithPin(studyId, participantId, pin, deviceToken) {
   return getProfile(studyId, participantId).then(function (profile) {
     if (!profile) return false;
     var salt = fromBase64(profile.pin_salt);
@@ -153,11 +163,14 @@ function unlockWithPin(studyId, participantId, pin) {
       return unwrapDataKey(
         { iv: profile.wrapped_key_iv, wrapped: profile.wrapped_key_ciphertext }, wrappingKey
       ).then(function (dataKey) {
-        session = { studyId: studyId, participantId: participantId, tz: profile.tz, dataKey: dataKey, pin: String(pin) };
+        session = { studyId: studyId, participantId: participantId, tz: profile.tz,
+          dataKey: dataKey, deviceToken: String(deviceToken) };
         var upgrade = profile.pin_iterations < PBKDF2_ITERATIONS
           ? rewrapAtCurrentIterations(studyId, participantId, pin, dataKey)
           : Promise.resolve();
-        return upgrade.then(function () { return true; });
+        return upgrade
+          .then(function () { return establishDeviceSession_(studyId, participantId, dataKey, deviceToken); })
+          .then(function () { return true; });
       }, function () {
         return false; // unwrap rejected: wrong PIN (or corrupted data -- see crypto.js comment)
       });
@@ -184,23 +197,133 @@ function rewrapAtCurrentIterations(studyId, participantId, pin, dataKey) {
   });
 }
 
+// ----- device key: what lets the app resume with no PIN prompt -----
+//
+// A second, independent wrapping of the same data key, this time under a non-extractable key
+// the browser holds for the page rather than one derived from anything the participant typed.
+// It is what tryAutoResume unwraps on a later boot, with no PIN and no network call. See
+// crypto.js's generateDeviceKey for what that non-extractability does and does not protect.
+
+// device_key is not encrypted content like history/queue/cachedConfig -- it holds the
+// CryptoKey object itself, which storage.js's putRecord clones natively (see that file's
+// comment) and which nothing needs a PIN to read, because it can only ever be *used*, never
+// exported, by whatever code holds a reference to it.
+function readDeviceKey(studyId, participantId) {
+  return readPlain(collectionKey(studyId, participantId, 'device_key'));
+}
+function writeDeviceKey(studyId, participantId, key) {
+  return writePlain(collectionKey(studyId, participantId, 'device_key'), key);
+}
+
+// Wraps a fresh copy of the data key under a new, non-extractable device key, and stores the
+// device token alongside it -- encrypted under that same key when probeCryptoKeyStorage says
+// this browser can be trusted with one, or in the clear otherwise (architecture.md section 5.6's
+// fallback). Which of the two applies is recorded in the profile, so tryAutoResume never has to
+// guess which field to read.
+//
+// Called once per sign-in event -- createLocalProfile, unlockWithPin, and changePin -- always
+// with a token the caller just received from setPin or verifyPin, never minted here. Overwrites
+// whatever device key and wrapped copy were on file, which is correct: a fresh sign-in means the
+// server has already handed out a new token, and the old device-wrapped copy would only unwrap
+// the token that token replaced.
+function establishDeviceSession_(studyId, participantId, dataKey, deviceToken) {
+  var profileKey = collectionKey(studyId, participantId, 'profile');
+  var deviceKey, canStoreKey;
+  return probeCryptoKeyStorage().then(function (result) {
+    canStoreKey = result;
+    return generateDeviceKey();
+  }).then(function (key) {
+    deviceKey = key;
+    return writeDeviceKey(studyId, participantId, deviceKey);
+  }).then(function () {
+    return wrapDataKey(dataKey, deviceKey);
+  }).then(function (wrappedForDevice) {
+    var tokenPromise = canStoreKey
+      ? encryptJSON(deviceKey, deviceToken).then(function (enc) { return { storage: 'encrypted', enc: enc }; })
+      : Promise.resolve({ storage: 'plain', enc: null });
+    return tokenPromise.then(function (tokenResult) {
+      return readPlain(profileKey).then(function (profile) {
+        profile.wrapped_key_device_iv = wrappedForDevice.iv;
+        profile.wrapped_key_device_ciphertext = wrappedForDevice.wrapped;
+        profile.device_token_storage = tokenResult.storage;
+        if (tokenResult.storage === 'encrypted') {
+          profile.device_token_enc = tokenResult.enc;
+          delete profile.device_token_plain;
+        } else {
+          profile.device_token_plain = deviceToken;
+          delete profile.device_token_enc;
+        }
+        profile.last_verified_utc = new Date().toISOString();
+        return writePlain(profileKey, profile);
+      });
+    });
+  });
+}
+
+// Reads the device key and unwraps the data key and the device token, with no PIN and no
+// network call. Shows no screen and never throws: any failure along the way (no device key
+// stored yet, an unwrap rejected, a corrupted record) simply means there is nothing to resume,
+// and the login screen is the correct fallback either way.
+//
+// @return {Promise<boolean>} True if the session is now unlocked.
+function tryAutoResume(studyId, participantId) {
+  return getProfile(studyId, participantId).then(function (profile) {
+    if (!profile || !profile.wrapped_key_device_iv) return false;
+    return readDeviceKey(studyId, participantId).then(function (deviceKey) {
+      if (!deviceKey) return false;
+      return unwrapDataKey(
+        { iv: profile.wrapped_key_device_iv, wrapped: profile.wrapped_key_device_ciphertext }, deviceKey
+      ).then(function (dataKey) {
+        var tokenPromise = profile.device_token_storage === 'encrypted'
+          ? decryptJSON(deviceKey, profile.device_token_enc)
+          : Promise.resolve(profile.device_token_plain);
+        return tokenPromise.then(function (token) {
+          if (!token) return false;
+          session = { studyId: studyId, participantId: participantId, tz: profile.tz,
+            dataKey: dataKey, deviceToken: String(token) };
+          return true;
+        });
+      });
+    });
+  }).catch(function () {
+    return false;
+  });
+}
+
+// Records that the server just confirmed this device is still recognised, so a boot long after
+// the last successful check can tell a revalidation is overdue (auth.js's
+// SESSION_REVALIDATE_DAYS) instead of only ever finding out from a rejected write. Requires an
+// active session; a no-op otherwise.
+function markSessionVerified() {
+  if (!session) return Promise.resolve();
+  var key = collectionKey(session.studyId, session.participantId, 'profile');
+  return readPlain(key).then(function (profile) {
+    if (!profile) return;
+    profile.last_verified_utc = new Date().toISOString();
+    return writePlain(key, profile);
+  });
+}
+
 // Changes the PIN. Online-only: setPin is a google.script.run round trip, and queueing a PIN
-// change would race against queued markers/surveys sent under the old or new PIN. Requires an
+// change would race against queued markers/surveys sent under the old or new token. Requires an
 // active session -- the already-unwrapped session.dataKey is simply re-wrapped under a key
 // derived from newPin, with a fresh salt; the server call above is what actually verifies
-// oldPin, so nothing here needs to re-derive or re-unwrap with it.
+// oldPin, so nothing here needs to re-derive or re-unwrap with it. The fresh token setPin
+// returns is stored the same way a sign-in stores one, so the device stays signed in and the
+// new PIN is never retyped.
 function changePin(oldPin, newPin) {
   if (!session) return Promise.resolve({ ok: false, reason: 'locked' });
+  var studyId = session.studyId, participantId = session.participantId, dataKey = session.dataKey;
   return new Promise(function (resolve) {
-    setPin(session.studyId, session.participantId, newPin, oldPin,
+    setPin(studyId, participantId, newPin, oldPin,
       function (res) { resolve(res || { ok: false, reason: 'offline' }); },
       function () { resolve({ ok: false, reason: 'offline' }); });
   }).then(function (result) {
     if (!result.ok) return result;
-    var key = collectionKey(session.studyId, session.participantId, 'profile');
+    var key = collectionKey(studyId, participantId, 'profile');
     var newSalt = randomSalt();
     return deriveWrappingKey(newPin, newSalt, PBKDF2_ITERATIONS).then(function (wrappingKey) {
-      return wrapDataKey(session.dataKey, wrappingKey);
+      return wrapDataKey(dataKey, wrappingKey);
     }).then(function (wrapped) {
       return readPlain(key).then(function (profile) {
         profile.pin_salt = toBase64(newSalt);
@@ -211,30 +334,57 @@ function changePin(oldPin, newPin) {
         return writePlain(key, profile);
       });
     }).then(function () {
-      session.pin = String(newPin);
+      return establishDeviceSession_(studyId, participantId, dataKey, result.deviceToken);
+    }).then(function () {
+      session.deviceToken = String(result.deviceToken);
       return { ok: true };
     });
   });
 }
 
-// Clears the in-memory session only. Every namespaced record for this identity stays on disk,
-// still encrypted, exactly as before -- logging out never deletes local data, so logging back
-// in with the correct PIN sees the same history again. See docs/architecture.md's local storage
-// section for the reasoning.
-function lock() {
+// Ends the session: best-effort tells the server to forget this device's token, then deletes
+// the device key, the device-wrapped copy of the data key, and the stored token -- the PIN-
+// wrapped copy, history, queue, and cached config are all untouched, so logging back in with the
+// correct PIN sees the same history again. See docs/architecture.md's local storage section.
+//
+// Used both for an explicit "Log out" and for the softer case in auth.js where the server no
+// longer recognises this device's token: either way, the point is that the next boot must not
+// silently auto-resume with material the server has already stopped honoring.
+function logout(studyId, participantId) {
+  var token = session ? session.deviceToken : null;
   session = null;
+  var signOut = token
+    ? new Promise(function (resolve) {
+        signOutDevice(studyId, participantId, token, function () { resolve(); }, function () { resolve(); });
+      })
+    : Promise.resolve();
+  return signOut.then(function () {
+    return deleteRecord(collectionKey(studyId, participantId, 'device_key'));
+  }).then(function () {
+    var key = collectionKey(studyId, participantId, 'profile');
+    return readPlain(key).then(function (profile) {
+      if (!profile) return;
+      delete profile.wrapped_key_device_iv;
+      delete profile.wrapped_key_device_ciphertext;
+      delete profile.device_token_storage;
+      delete profile.device_token_enc;
+      delete profile.device_token_plain;
+      return writePlain(key, profile);
+    });
+  });
 }
 
-// Deletes every namespaced record for one identity. Destructive, and not wired to any button in
-// Phase 3 -- kept for completeness, not as a "forget this device" feature nobody has asked for.
+// Deletes every namespaced record for one identity, including its device key. Destructive, and
+// not wired to any button in Phase 3 -- kept for completeness, not as a "forget this device"
+// feature nobody has asked for.
 function wipeProfile(studyId, participantId) {
-  return Promise.all(['profile', 'history', 'queue', 'cachedConfig'].map(function (name) {
+  return Promise.all(['profile', 'history', 'queue', 'cachedConfig', 'device_key'].map(function (name) {
     return deleteRecord(collectionKey(studyId, participantId, name));
   }));
 }
 
-function getSessionPin() {
-  return session ? session.pin : null;
+function getSessionToken() {
+  return session ? session.deviceToken : null;
 }
 function getSessionIdentity() {
   return session ? { studyId: session.studyId, participantId: session.participantId, tz: session.tz } : null;

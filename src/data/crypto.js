@@ -80,6 +80,25 @@ function generateDataKey() {
   return crypto.subtle.generateKey({ name: WRAP_ALGORITHM, length: WRAP_KEY_LENGTH }, true, ['encrypt', 'decrypt']);
 }
 
+// A device key SubtleCrypto generates and holds itself: non-extractable, so no code running on
+// this page -- including this file -- can ever read its raw bytes back out, only ask the browser
+// to wrap/unwrap or encrypt/decrypt with it. It wraps a second copy of the data key and encrypts
+// the stored device token, which is what lets a return visit resume with no PIN prompt.
+//
+// What that actually buys: protection against page script exporting the key, whether by an
+// injection or by a bug in this app's own code. It does not protect against someone with the
+// device itself on a rooted or jailbroken phone, where the browser's own on-disk form of the key
+// can be recovered outside the page sandbox entirely. The device token being revocable from the
+// Sheet and useless anywhere else is what actually limits a stolen phone's exposure; this key is
+// a second layer on top of that, not the layer doing the real work. See docs/architecture.md
+// section 5.6, and storage.js's probeCryptoKeyStorage, which checks this holds before relying on
+// it rather than assuming so.
+function generateDeviceKey() {
+  return crypto.subtle.generateKey(
+    { name: WRAP_ALGORITHM, length: WRAP_KEY_LENGTH }, false, ['wrapKey', 'unwrapKey', 'encrypt', 'decrypt']
+  );
+}
+
 // Wraps dataKey under wrappingKey. The returned iv and wrapped bytes are safe to store in the
 // clear -- the wrapping key, not secrecy of these bytes, is what protects the data key.
 function wrapDataKey(dataKey, wrappingKey) {

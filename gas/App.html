@@ -26,6 +26,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
 // on the common case of typing too few digits.
 var PIN_MIN_LENGTH = 6;
 
+// How long a device may go without a successful checkSession before the interface says so.
+// Nothing here ever signs anyone out for being offline -- see checkRevocation below -- this only
+// controls when the quiet "not checked recently" line appears. Matches the fifteen-day backup
+// reminder closely enough to be one interval a person has to remember.
+var SESSION_REVALIDATE_DAYS = 14;
+
 // One reason -> message lookup, shared by every screen that can receive a {ok, reason} or
 // {valid, reason} envelope, so a reason is never translated into user-facing text more than
 // once and nothing ever branches on err.message from a google.script.run failure handler.
@@ -35,6 +41,7 @@ var REASON_MESSAGES = {
   wrong_pin: 'Incorrect PIN. Try again.',
   pin_too_short: 'Choose a PIN of at least ' + PIN_MIN_LENGTH + ' digits.',
   not_set: 'No PIN is on file yet for this participant.',
+  device_not_recognized: 'Please enter your PIN again on this device.',
   offline: 'You need a connection to do this. Check your connection and try again.'
 };
 
@@ -42,9 +49,12 @@ var MSG_LOGIN_FAILED = 'Unable to log in. Please verify the Study ID and Partici
 var MSG_LOGIN_UNREACHABLE = 'Unable to reach the study server right now. Check your connection and try again.';
 
 // The identity a PIN-setup or PIN-entry screen is currently acting on, and which of the three
-// ways it got there: 'local-unlock' (a profile already exists on this device -- fully offline),
-// 'server-verify' (a PIN is already set server-side, but this device has no local profile yet),
-// or set implicitly by beginPinSetup (no PIN exists anywhere yet).
+// ways it got there: 'local-unlock' (a profile already exists on this device, so a verified PIN
+// unwraps it), 'server-verify' (a PIN is already set server-side, but this device has no local
+// profile yet), or set implicitly by beginPinSetup (no PIN exists anywhere yet). Both PIN-entry
+// modes confirm the PIN with the server before doing anything else: unwrapping a local profile
+// is offline-capable on its own, but a device token can only be minted server-side, and signing
+// in without one would leave the app unable to write anything.
 var pendingIdentity = null;
 var pendingMode = null;
 
@@ -62,9 +72,11 @@ function showPinEntryError(msg) { document.getElementById('pin-entry-error').tex
 function showPinSetupError(msg) { document.getElementById('pin-setup-error').textContent = msg; }
 function showChangePinError(msg) { document.getElementById('change-pin-error').textContent = msg; }
 
-// Study/Participant ID submitted: routes to PIN entry (local unlock, or a server verify if this
-// is a new device) or PIN setup (nobody has chosen a PIN for this identity yet), depending on
-// what this device already knows and what the server says.
+// Study/Participant ID submitted: routes to PIN entry (this device already has a local profile
+// to unwrap, or does not) or PIN setup (nobody has chosen a PIN for this identity yet),
+// depending on what this device already knows and what the server says. Only reached after
+// boot()'s tryAutoResume has already failed for the last identity used on this device, so a
+// profile existing locally here does not by itself mean the device is still signed in.
 async function doStart() {
   var study = document.getElementById('in-study').value.trim().toUpperCase();
   var part = document.getElementById('in-part').value.trim().toUpperCase();
@@ -122,24 +134,18 @@ function backToLogin() {
   show('screen-login');
 }
 
-// PIN entered on the entry screen: unwraps locally (fully offline, when a profile already
-// exists on this device) or checks it against the server and bootstraps a fresh local profile
-// (a device seeing this identity for the first time has nothing to unwrap yet -- there is no
-// read path to repopulate its history from, so it legitimately starts empty).
+// PIN entered on the entry screen. Always confirms with the server first (verifyPin), whether
+// or not this device already has a local profile to unwrap: unwrapping is local and works
+// offline on its own, but only the server can mint the device token a fresh sign-in needs, so
+// entering a PIN here requires connectivity either way. What 'local-unlock' still changes is
+// only what happens after a successful verify -- unwrapping an existing profile rather than
+// creating a new one.
 async function doPinEntry() {
   var pin = document.getElementById('in-pin-entry').value;
   if (!pin) { toast('Enter your PIN'); return; }
   var id = pendingIdentity;
+  var hasLocalProfile = pendingMode === 'local-unlock';
   setPinEntryBusy(true);
-
-  if (pendingMode === 'local-unlock') {
-    var ok = await unlockWithPin(id.studyId, id.participantId, pin);
-    setPinEntryBusy(false);
-    if (!ok) { showPinEntryError(REASON_MESSAGES.wrong_pin); return; }
-    await setLastIdentity(id.studyId, id.participantId);
-    enterHome(); // revalidates in the background itself; local unlock already let them in
-    return;
-  }
 
   verifyPin(id.studyId, id.participantId, pin, function (res) {
     if (!res || !res.ok) {
@@ -147,12 +153,27 @@ async function doPinEntry() {
       showPinEntryError(REASON_MESSAGES[res && res.reason] || MSG_LOGIN_FAILED);
       return;
     }
-    createLocalProfile(id.studyId, id.participantId, id.tz, pin)
-      .then(function () { return setLastIdentity(id.studyId, id.participantId); })
-      .then(function () {
-        setPinEntryBusy(false);
-        enterHome();
-      });
+    var established = hasLocalProfile
+      ? unlockWithPin(id.studyId, id.participantId, pin, res.deviceToken)
+      : createLocalProfile(id.studyId, id.participantId, id.tz, pin, res.deviceToken)
+        .then(function () { return true; });
+
+    established.then(function (unlockedOk) {
+      setPinEntryBusy(false);
+      if (hasLocalProfile && !unlockedOk) {
+        // The server just accepted this PIN, but this device's own locally-wrapped copy did
+        // not unwrap with it. Only reachable if the PIN was changed from a different device
+        // after this one last signed in, which leaves this device's local copy permanently
+        // under the old PIN -- there is no way to re-derive it from the new one. Not
+        // auto-recovered: that would mean silently discarding an encrypted profile the
+        // participant never asked to discard.
+        showPinEntryError('This PIN does not match what is stored on this device. If you '
+          + 'changed your PIN on another device, contact your study team about resetting this '
+          + 'one.');
+        return;
+      }
+      setLastIdentity(id.studyId, id.participantId).then(enterHome);
+    });
   }, function () {
     setPinEntryBusy(false);
     toast(MSG_LOGIN_UNREACHABLE);
@@ -175,7 +196,7 @@ function doPinSetup() {
       showPinSetupError(REASON_MESSAGES[res && res.reason] || 'Could not set PIN. Try again.');
       return;
     }
-    createLocalProfile(id.studyId, id.participantId, id.tz, pin)
+    createLocalProfile(id.studyId, id.participantId, id.tz, pin, res.deviceToken)
       .then(function () { return setLastIdentity(id.studyId, id.participantId); })
       .then(function () {
         setPinSetupBusy(false);
@@ -193,38 +214,95 @@ async function enterHome() {
   document.getElementById('who-part').textContent = identity.participantId;
   show('screen-home');
   await applyHomeState(); // from cache first (instant)
+  await updateSessionNote();
   flushQueue();
-  checkRevocation(true); // catches a revoked ID, then re-applies state
+  checkRevocation(true); // confirms this device is still recognised, then re-applies state
+}
+
+// Shows or hides the quiet "have not checked in a while" line, per SESSION_REVALIDATE_DAYS.
+// This is purely informational -- being offline never signs anyone out (checkRevocation) -- it
+// only tells the participant their entries are queued rather than confirmed recently.
+async function updateSessionNote() {
+  var note = document.getElementById('session-note');
+  var identity = getSessionIdentity();
+  if (!identity) { note.classList.add('hidden'); return; }
+  var profile = await getProfile(identity.studyId, identity.participantId);
+  var lastVerified = profile && profile.last_verified_utc;
+  var daysSince = lastVerified ? (Date.now() - new Date(lastVerified).getTime()) / 86400000 : Infinity;
+  if (daysSince > SESSION_REVALIDATE_DAYS) {
+    note.textContent = 'This device has not checked in with the study server in a while. '
+      + 'Your entries are still saved here.';
+    note.classList.remove('hidden');
+  } else {
+    note.classList.add('hidden');
+  }
 }
 
 // Ends the session without touching local data: a participant who logs back in with the
 // correct PIN sees the same history, unchanged. Returns to PIN entry for the same identity,
 // since nothing about it was forgotten. See docs/architecture.md's local storage section.
-function doLogout() {
+async function doLogout() {
   var identity = getSessionIdentity();
-  lock();
+  if (identity) await logout(identity.studyId, identity.participantId);
   showOverlay(false);
-  if (identity) beginPinEntry(identity.studyId, identity.participantId, null, 'local-unlock');
+  if (identity) beginPinEntry(identity.studyId, identity.participantId, identity.tz, 'local-unlock');
   else show('screen-login');
 }
 
 // The server has the final say on the allowlist: if this participant's ID was revoked, stop
-// them continuing on (possibly stale) local history. This also only locks, never deletes --
-// a later re-enable should not cost the participant their on-device history.
+// them continuing on (possibly stale) local history. Routes through the same vault.logout as an
+// explicit "Log out" -- not just clearing the in-memory session -- because the device key would
+// otherwise still be sitting on disk, and the very next boot's tryAutoResume would use it to
+// walk straight back into Home with no PIN prompt at all, undoing the point of logging out here.
+// This still only locks, never deletes: a later re-enable should not cost the participant their
+// on-device history.
 function forceLogout(message) {
-  lock();
-  showOverlay(false);
-  show('screen-login');
-  if (message) toast(message);
+  var identity = getSessionIdentity();
+  var cleanup = identity ? logout(identity.studyId, identity.participantId) : Promise.resolve();
+  cleanup.then(function () {
+    showOverlay(false);
+    show('screen-login');
+    if (message) toast(message);
+  });
 }
 
-function checkRevocation(thenApplyHome) {
+// A device whose token the server no longer recognises -- replaced by another device signing
+// in, or cleared by the researcher -- keeps every queued and stored entry. Unlike forceLogout,
+// nothing about this participant's access was actually revoked, so there is nothing to warn
+// them out of; the queue simply cannot drain until the PIN is entered again to mint a fresh
+// token. Clearing the local device-key material (via the same vault.logout used for an explicit
+// logout) is what stops the next boot from silently auto-resuming with the token that was just
+// rejected.
+function softSignOut(message) {
   var identity = getSessionIdentity();
   if (!identity) return;
-  validateLogin(identity.studyId, identity.participantId, function (res) {
-    if (!res || !res.valid) { forceLogout(REASON_MESSAGES.invalid_login); return; }
-    if (thenApplyHome) applyHomeState();
-  }, function () {}); // request never completed (offline/etc.) - stay logged in, retry later
+  logout(identity.studyId, identity.participantId).then(function () {
+    showOverlay(false);
+    beginPinEntry(identity.studyId, identity.participantId, identity.tz, 'local-unlock');
+    if (message) toast(message);
+  });
+}
+
+// Confirms this device is still the one recognised for this participant. Called on entering
+// Home and History, per docs/architecture.md section 5.6: authoritative only on an explicit
+// rejection from the server, never on a failure to reach it at all -- an offline participant is
+// never signed out, they simply keep working and try again on the next trigger.
+function checkRevocation(thenApplyHome) {
+  var identity = getSessionIdentity();
+  var token = getSessionToken();
+  if (!identity || !token) return;
+  checkSession(identity.studyId, identity.participantId, token, function (res) {
+    if (res && res.ok) {
+      markSessionVerified().then(updateSessionNote);
+      if (thenApplyHome) applyHomeState();
+      return;
+    }
+    if (res && res.reason === 'device_not_recognized') {
+      softSignOut(REASON_MESSAGES.device_not_recognized);
+      return;
+    }
+    forceLogout(REASON_MESSAGES[(res && res.reason) || 'invalid_login']);
+  }, function () {}); // request never completed (offline/etc.) -- stay signed in, retry later
 }
 
 // ----- Change PIN: a distinct case from setup or forgot-it (architecture.md section 5.2) -----
@@ -294,6 +372,11 @@ async function boot() {
   if (last) {
     document.getElementById('in-study').value = last.study_id;
     document.getElementById('in-part').value = last.participant_id;
+    // No PIN prompt, no network call: reads the device key this identity left behind (if any)
+    // and unwraps straight into a working session. Falls through to the login screen, still
+    // pre-filled, whenever there is nothing to resume.
+    var resumed = await tryAutoResume(last.study_id, last.participant_id);
+    if (resumed) { enterHome(); return; }
   }
   show('screen-login');
 }
@@ -447,9 +530,9 @@ function showOverlay(on) {
   document.getElementById('sleep-overlay').classList.toggle('hidden', !on);
 }
 
-// Shows/hides one of the modal dialogs. Focus-trap and focus-restore land in Stage 3; every
-// dialog in the app is meant to route through these two functions so that work only has to be
-// written once.
+// Shows/hides one of the modal dialogs. Focus-trap and focus-restore are not implemented yet;
+// every dialog in the app is meant to route through these two functions so that work only has
+// to be written once.
 function openModal(id) {
   document.getElementById(id).classList.remove('hidden');
 }
@@ -567,8 +650,9 @@ async function onWake() {
 }
 
 // Drain the offline queue one item at a time; a failure halts the drain until the next call.
-// The real drain engine (idempotent dispatch by kind, never-retry-on-revoke) is Stage 3 -- this
-// keeps today's shape, only made async, so the app keeps running end to end in the meantime.
+// The real drain engine (idempotent dispatch by kind, never-retry-on-revoke) is not implemented
+// yet -- this keeps today's shape, only made async, so the app keeps running end to end in the
+// meantime.
 async function flushQueue() {
   var q = await getQueue();
   if (!q.length) return;

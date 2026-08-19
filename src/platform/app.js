@@ -43,3 +43,11 @@ function setPin(studyId, participantId, newPin, oldPin, onSuccess, onFailure) {
 function verifyPin(studyId, participantId, pin, onSuccess, onFailure) {
   throw new Error('verifyPin is not available in the standalone build');
 }
+
+function checkSession(studyId, participantId, deviceToken, onSuccess, onFailure) {
+  throw new Error('checkSession is not available in the standalone build');
+}
+
+function signOutDevice(studyId, participantId, deviceToken, onSuccess, onFailure) {
+  throw new Error('signOutDevice is not available in the standalone build');
+}

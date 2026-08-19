@@ -29,9 +29,9 @@ function showOverlay(on) {
   document.getElementById('sleep-overlay').classList.toggle('hidden', !on);
 }
 
-// Shows/hides one of the modal dialogs. Focus-trap and focus-restore land in Stage 3; every
-// dialog in the app is meant to route through these two functions so that work only has to be
-// written once.
+// Shows/hides one of the modal dialogs. Focus-trap and focus-restore are not implemented yet;
+// every dialog in the app is meant to route through these two functions so that work only has
+// to be written once.
 function openModal(id) {
   document.getElementById(id).classList.remove('hidden');
 }

@@ -3,8 +3,8 @@
 // Author(s): Gabriel Mongefranco
 // Created: 2026-08-18
 // Last Modified: 2026-08-19
-// Summary: Startup: loads server config, wires DOM event listeners, and shows the login screen,
-//   pre-filled with the last identity used on this device if there is one.
+// Summary: Startup: loads server config, wires DOM event listeners, and either resumes the last
+//   identity used on this device with no prompt, or shows the login screen pre-filled with it.
 // Notes: See README file for documentation and full license information.
 //
 // Copyright © 2026 The Regents of the University of Michigan
@@ -57,6 +57,11 @@ async function boot() {
   if (last) {
     document.getElementById('in-study').value = last.study_id;
     document.getElementById('in-part').value = last.participant_id;
+    // No PIN prompt, no network call: reads the device key this identity left behind (if any)
+    // and unwraps straight into a working session. Falls through to the login screen, still
+    // pre-filled, whenever there is nothing to resume.
+    var resumed = await tryAutoResume(last.study_id, last.participant_id);
+    if (resumed) { enterHome(); return; }
   }
   show('screen-login');
 }

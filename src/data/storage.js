@@ -58,6 +58,10 @@ function getRecord(key) {
   });
 }
 
+// record.value can be any structured-cloneable JavaScript value, not only plain JSON -- IndexedDB
+// clones it natively. In particular a CryptoKey clones and reads back as a live, usable key with
+// no special handling here, which is what lets vault.js store a non-extractable device key
+// through this same function rather than needing a separate code path for it.
 function putRecord(record) {
   return openDb().then(function (db) {
     return new Promise(function (resolve, reject) {
@@ -78,4 +82,31 @@ function deleteRecord(key) {
       tx.onerror = function () { reject(tx.error); };
     });
   });
+}
+
+// Feature-detects whether this browser actually stores and returns a usable non-extractable
+// CryptoKey through IndexedDB, rather than assuming crypto.js's generateDeviceKey design works
+// everywhere it might run. Generates a throwaway key, round-trips it through a scratch record,
+// and confirms what comes back still behaves like a secret key. Cleans up the scratch record
+// either way, and never throws: any failure here just means the answer is false.
+//
+// architecture.md section 5.6 measures this as true on desktop Chrome inside the Apps Script
+// frame, including across a reload, and flags iOS Safari as still unverified -- run this there
+// and report the result honestly rather than assuming it holds.
+function probeCryptoKeyStorage() {
+  var PROBE_KEY = 'crypto_key_storage_probe';
+  return crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
+    .then(function (key) {
+      return putRecord({ key: PROBE_KEY, value: key });
+    })
+    .then(function () {
+      return getRecord(PROBE_KEY);
+    })
+    .then(function (rec) {
+      var usable = !!(rec && rec.value && rec.value.type === 'secret');
+      return deleteRecord(PROBE_KEY).then(function () { return usable; });
+    })
+    .catch(function () {
+      return deleteRecord(PROBE_KEY).catch(function () {}).then(function () { return false; });
+    });
 }
