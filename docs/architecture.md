@@ -4,7 +4,7 @@ docs/architecture.md
 Author(s): Gabriel Mongefranco
 Created: 2026-08-17
 Last Modified: 2026-08-19
-Summary: Version 1 architecture specification for MiNap Go: the two build targets, the Google Sheet schema, participant authentication, dashboards, and the decisions behind them.
+Summary: Version 1 architecture specification for MiNap Go: the two build targets, the Google Sheet schema, participant login and device sessions, dashboards, and the decisions behind them.
 Notes: See README file for documentation and full license information.
 
 Copyright © 2026 The Regents of the University of Michigan
@@ -24,8 +24,10 @@ system is put together, what data it stores, and why the main design choices wer
 made. It is written for a maintainer, researcher, or auditor who has never seen
 the project before.
 
-Version 1 has not been built yet. This page is the plan. Anything already working
-in the repository is marked as such; everything else is a specification.
+Version 1 is partly built. The build structure, the workbook layout, and the
+server functions exist; the participant-facing screens are being written now.
+Anything already working in the repository is marked as such; everything else is
+a specification.
 
 ---
 
@@ -192,10 +194,19 @@ One row per participant per study.
 | `pin_set_at` | Timestamp |
 | `failed_attempts` | Counter, reset on a correct PIN |
 | `locked` | `Yes` after too many failures |
+| `device_token_hash` | Identifies the one device this participant is signed in on. Clear it to sign that device out |
+| `device_token_set_at` | When that device signed in |
+| `device_last_seen_utc` | The last day that device sent anything |
 
 Multiple studies live in one Sheet by putting different values in `study_id`. A
 Participant ID leaked from one study cannot be used in another, because login
 checks the pair.
+
+The two things a researcher can clear here are not the same thing, and section
+5.5 spells out the difference. Clearing the PIN cells starts PIN setup again and
+makes the copy of the diary on the participant's own device unreadable. Clearing
+`device_token_hash` only signs that device out: the participant enters their PIN
+and everything on the device is still there.
 
 ### 3.4 QuestionsSetup
 
@@ -762,7 +773,7 @@ bed even though the markers already give sleep and wake times.
 
 ---
 
-## 5. Participant login and PINs
+## 5. Participant login, PINs, and device sessions
 
 Only the study build has a login. The standalone build has no server to check
 anything against.
@@ -795,12 +806,22 @@ One procedure covers both problems, so there is only one thing to remember.
 
 ### 5.3 What the PIN does and does not do
 
-The PIN unlocks the key that encrypts the participant's local copy of their data.
-Entering it decrypts the profile; a wrong PIN cannot read anything. This works
-offline, and a lost phone does not leak a diary.
+The PIN does two jobs, and only two:
 
-The server also checks the PIN before accepting a write, which is what stops
-someone from logging entries under another participant's ID.
+1. It proves who the person is at login and when they change it.
+2. It unlocks the key that encrypts the participant's local copy of their data.
+   Entering it decrypts the profile; a wrong PIN cannot read anything, and this
+   works with no connection.
+
+It is not the credential the server checks on a write. That is a device token,
+described in section 5.4. The PIN is never stored on the device and is not held
+in memory after the moment it is used.
+
+Splitting the two matters. If the PIN authenticated every write, the app would
+have to keep the PIN to stay signed in, and keeping it would hand a stolen device
+the participant's own chosen secret, which people reuse. A device token is
+random, useful for nothing but writing as that participant to this one workbook,
+and revocable from the Sheet.
 
 Be clear about the limits:
 
@@ -817,15 +838,57 @@ Be clear about the limits:
 State this in the protocol. The PIN stops participants writing as each other. It
 is not hospital-grade authentication.
 
-### 5.4 Resetting a PIN destroys the local copy
+### 5.4 Staying signed in: the device token
+
+A sleep diary is opened at least three times around one night: going to bed,
+waking, and the morning survey. The phone may have reclaimed the page between
+each one. Asking for a PIN every time is friction nobody asked for, so the app
+stays signed in until the participant logs out or the researcher disables them.
+
+**What the server issues.** A successful `setPin` or `verifyPin` mints a device
+token: 256 bits of randomness, returned to the browser once and never again. The
+Sheet stores only a hash of it, in `device_token_hash`. Every write sends the
+token instead of the PIN, and the server checks three things before storing
+anything: the row exists, `enabled` is `Yes`, and the token matches.
+
+The hash here is a single SHA-256 with no stretching, unlike the PIN hash in 5.3.
+Stretching exists to slow an offline guess against a short secret a person chose.
+A 256-bit random value is not guessed, and skipping the stretching takes roughly
+a second of work off every marker and every survey.
+
+A failed token check never touches `failed_attempts`. That counter belongs to PIN
+guessing, and a stale device must not be able to lock a participant out of their
+own account.
+
+**One device at a time.** Signing in on a second device mints a new token and
+overwrites the old one, so the first device is signed out. This is a deliberate
+simplification, not an oversight: with no read path, a new device already starts
+with an empty local history, so there is nothing for two devices to keep in step.
+
+Being signed out mid-night costs nothing. A write refused for an unrecognised
+token comes back with its own reason, distinct from an invalid login, and the app
+keeps whatever it had queued and asks for the PIN. Entering it mints a new token
+and the queue sends in order. Nothing is dropped, and the server is never asked
+whether a night is in progress.
+
+**Revoking.** Clearing `device_token_hash` signs that device out at the next
+write. Setting `enabled` to `No` stops every write for that participant. Both are
+one cell in a Sheet the researcher already owns.
+
+### 5.5 Resetting a PIN destroys the local copy
 
 Clearing the PIN throws away the key to the encrypted local data, so the
 participant's history on that device becomes unreadable. In a study this is
 acceptable: the Sheet holds the record. Say so in the participant instructions.
 
+Clearing the device token is not the same thing and does not do this. It signs
+the device out; the PIN still unwraps everything that was already there. Reach
+for it when a participant loses a phone or moves to a new one, and reach for the
+PIN reset only when the PIN itself is the problem.
+
 Private notes are unaffected. See section 6.
 
-### 5.5 Local storage
+### 5.6 Local storage
 
 The PIN-unlocked key described in 5.3 encrypts an IndexedDB database, not
 localStorage. IndexedDB replaced localStorage in version 1 because the
@@ -853,15 +916,79 @@ fields for the common case (one participant, one device, every night). A
 what is actually looked up, so switching never touches another identity's
 data.
 
-**Logging out locks; it never deletes.** "Log out" clears the in-memory key
-and PIN and returns to the PIN entry screen for the same identity. Every
-namespaced record stays on disk, still encrypted, exactly as before --
-logging back in with the correct PIN sees the same history again. This
+**How the app resumes without asking.** The key that encrypts the local
+records is wrapped twice. One copy is wrapped under a key derived from the
+PIN, which is what a fresh sign-in unwraps. The other is wrapped under a
+device key: a random key the browser generates and stores, marked so that
+page code can use it but can never read it back out. The same device key
+encrypts the stored device token. On startup the app reads the device key,
+unwraps the data key and the token, and goes straight to the home screen with
+no prompt and no connection needed.
+
+**What that protects, and what it does not.** A key the page cannot read out
+cannot be stolen by injected script, and the app cannot be tricked into
+handing over its own key. It is not a safe against someone who has taken the
+phone apart: on a rooted or jailbroken device the browser's stored form of
+that key can be recovered. So the protection that carries the weight is that
+the token is revocable and useless anywhere else, and the unreadable key is a
+second layer on top. Set out honestly, the position is this: a lost unlocked
+phone exposes the diary on that phone, it does not expose the PIN, and the
+researcher can revoke the device from the Sheet.
+
+If a browser turns out not to store the device key properly, the app stores
+the token in the clear instead and carries on. That is a smaller loss than it
+sounds, because the token is single-purpose and revocable. Storing the PIN
+would not be, which is why the app never does.
+
+**Measured, not assumed.** Inside the Apps Script frame on desktop Chrome, a
+non-extractable key is generated, stored, read back as a usable key, and still
+works after a full reload; `exportKey` on it is refused, so the protection is
+real rather than nominal. Two things about it still need checking on the
+devices participants actually use: iOS Safari, and whether a researcher
+publishing a new version of their deployment changes the frame's origin. It
+does not change across a reload. If it changes across a redeployment, every
+participant's local copy is orphaned and they sign in again on an empty
+device -- survivable, because the Sheet holds the record, but it belongs in
+the participant instructions rather than in a surprise.
+
+**Ask for persistent storage, in both builds.** The study build was assumed
+not to be able to, being third-party storage in a frame; it can, and the
+request is granted at least sometimes. Ask once, after the first successful
+sign-in, and treat a refusal as normal rather than as an error. It does not
+change the honest position in section 1 -- study-build storage is the
+unreliable copy and the Sheet is the record -- but a granted request is free
+and moves the odds the right way.
+
+**Private browsing throws all of this away.** Nothing persists past the
+session, and the request for persistent storage is refused outright. That is
+the browser working as intended, not a fault in the app, but a participant
+who opens the diary in a private window every night will be asked for their
+Study ID, Participant ID, and PIN every night and will never see their own
+history. Worth one line in the participant instructions and one entry in
+troubleshooting.
+
+**Logging out locks; it never deletes.** "Log out" clears the in-memory key,
+deletes the device key, the device-wrapped copy of the data key, and the
+stored token, and tells the server to forget the token as well. It then
+returns to the PIN entry screen for the same identity. The PIN-wrapped copy
+and every namespaced record stay on disk, still encrypted, exactly as before
+-- logging back in with the correct PIN sees the same history again. This
 matters because the study build's storage can already be cleared by the
 browser on its own (section 1); logging out should never be a second way to
 lose the same data. The same rule applies when a revoked Study/Participant ID
 forces a logout: a later re-enable should not cost the participant their
 on-device history.
+
+**Nobody is signed out for being offline.** Because every write is checked
+against `enabled` and the token, tapping Sleep while online is itself the
+check, and an authoritative one. The separate checks exist only so the
+interface does not keep showing a disabled participant their own screens, and
+they sign somebody out only on an explicit "no" from the server. The app
+records when it last heard back; after fourteen days with no answer it tries
+again on the next start, and if it still cannot reach the server it keeps
+working and says quietly that it has not checked recently. A participant with
+no signal is queueing writes that will be checked on arrival, so an
+unverified spell offline costs nothing and is not treated as a fault.
 
 **The standalone build has no logout function, because it has no login**
 (this whole section applies only to the study build). There is nothing to
@@ -930,16 +1057,29 @@ API.
 |---|---|
 | `doGet` | The app page |
 | `validateLogin` | Whether the login is valid, and whether a PIN is already on file for it |
-| `setPin` | Success or failure. Also handles changing an existing PIN, given the old one |
-| `verifyPin` | Success, failure, or locked |
+| `setPin` | Success or failure, and a new device token on success. Also handles changing an existing PIN, given the old one |
+| `verifyPin` | Success, failure, or locked. A new device token on success |
+| `checkSession` | Whether this participant is still enabled and this device still recognised |
+| `signOutDevice` | Confirmation only. Forgets the token it was given, and only that one |
 | `getConfig` | Question list, edit window, backup reminder interval |
 | `logMarker` | Confirmation only |
 | `logSurvey` | Confirmation only. Writes one Surveys row and its SurveyAnswers rows in one locked operation, so a survey can never exist without its answers or the reverse |
 | `updateMarker` | Confirmation only |
 
+`logMarker`, `logSurvey`, and `updateMarker` carry a device token, not a PIN. See
+section 5.4.
+
 No function returns diary or survey data. There is no read path in version 1, not
 even one protected by a PIN. Recovery happens through file export and import
 instead.
+
+**Why that rule may be worth revisiting later, but not now.** It rests on the
+deployment being open to anyone holding two IDs that are published in this
+repository and in the setup guide. A function that requires a device token is not
+open in that way, so a token-gated read path — recovering history on a new device,
+say, which is the sharpest limitation this design has — becomes possible to build
+safely for the first time. It is deliberately not in version 1. Anyone reaching
+for the old conclusion should notice that the premise underneath it has changed.
 
 `getHistory`, which once read the Sheet and returned a participant's rows to the
 browser, is gone, and `include` is renamed to `include_` so it is not callable.
@@ -1143,11 +1283,18 @@ device was offline, and delivered after the window has closed. The server judges
 it by when the edit was made, not when it arrived, so a participant is never
 punished for having no signal. The queued item carries that time.
 
-Adding a survey after the fact needs care. `start_datetime` and `end_datetime`
-must record when the participant actually answered, with the night it refers to
-carried in `sleep_day`. Otherwise completion rates look better than they were.
-Cap how far back a missing survey may be added, or participants will fill in two
-weeks the night before their final visit.
+Adding a survey after the fact needs care. `survey_opened_utc` and
+`survey_ended_utc` must record when the participant actually answered, with the
+night it refers to carried in `sleep_day`. Otherwise completion rates look better
+than they were.
+
+A missing survey may be added for the same seven days markers may be edited, and
+for the same reason: without a cap, participants fill in two weeks the night
+before their final visit. A survey may be completed only while it holds no
+answers at all. Once it has been submitted, or ended with even one answer given,
+it is closed for good, which keeps the "survey answers are never editable" rule
+above from being reachable by a side door. Both limits are enforced on the device
+and again on the server.
 
 ---
 
@@ -1570,11 +1717,16 @@ limit in section 9.2. Worth revisiting once the sharing feature has real use.
   with wording left blank and the researcher pastes it from their own licensed
   copy. This does not block Phase 2. Cite Carney et al. wherever the questions
   appear.
-- How far back a missing survey may be added. (Should be 7 days, same as editing history entries.)
-- How a `datetime` question is presented on a watch-sized screen. A full date and
-  time picker is the tightest control in the set at 320 pixels. Nothing in
-  version 1 uses the type, so this can wait until something does. (Can default to displaying - not storing - as two separate fields, one for date and one for time)
-- The exact iteration count for PIN hashing, measured against real Apps Script response times rather than estimated. (Should assume 100ms per hash, and be set to a total of 1 second for the whole operation)
+- The exact iteration count for PIN hashing, measured against real Apps Script
+  response times rather than estimated. Less pressing than it was: since section
+  5.4, the PIN hash runs at login and at a PIN change, not on every write, so a
+  higher count now costs a participant a moment once rather than a moment each
+  time they touch the app. Do not raise it without measuring.
+- Whether iOS Safari stores a non-extractable key the way desktop Chrome does,
+  per section 5.6, and whether publishing a new version of a deployment changes
+  the frame's origin and so orphans every participant's local copy. The desktop
+  Chrome case is measured and passes; these two are not. The fallback is written
+  and harmless either way.
 - Whether the demo spreadsheet contains only made-up data. (Of course! No real data!)
 - Measured payload sizes for a real 14-night report, to confirm the link and QR
   cap in section 9.2. (Could default to summary statistics, in a very compressed hex format, rather than the full data, to reduce size).
@@ -1594,10 +1746,13 @@ survive export to Excel; participants get charts in the app drawn without a
 library.
 
 `getHistory`, the function that once exposed participant diaries to anyone, is
-gone, and the Sheet schema in section 3 is frozen: every tab, column, server
-function, and chart it describes is built. What remains is section 12's
-participant-facing app -- the screens that call `logMarker`, `logSurvey`, and
-`updateMarker` -- and section 16's standalone build.
+gone. The Sheet schema in section 3 is built, and freezes once a study starts:
+the three device-session columns in 3.3 are the last addition it takes, made
+while nothing is deployed and nothing can be broken by making it.
+
+What remains is section 12's participant-facing app -- the screens that call
+`logMarker`, `logSurvey`, and `updateMarker` -- and section 16's standalone
+build.
 
 ## Additional resources
 

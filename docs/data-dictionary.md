@@ -3,7 +3,7 @@ This file is part of MiNap Go
 docs/data-dictionary.md
 Author(s): Gabriel Mongefranco
 Created: 2026-08-18
-Last Modified: 2026-08-18
+Last Modified: 2026-08-19
 Summary: Every tab and every column of the MiNap Go workbook, what each value means, who writes it, and how the tabs join together.
 Notes: See README file for documentation and full license information.
 
@@ -209,6 +209,9 @@ Who may log in. One row per participant per study.
 | `pin_set_at` | When the PIN was set, in UTC | App |
 | `failed_attempts` | How many wrong PINs in a row. Back to zero after a correct one | App |
 | `locked` | `Yes` once there have been too many wrong PINs in a row | App |
+| `device_token_hash` | Identifies the one device this participant is signed in on. Every marker, survey, and edit this participant sends is checked against this, not against the PIN | App |
+| `device_token_set_at` | When that device signed in, in UTC | App |
+| `device_last_seen_utc` | The last day that device sent anything, in UTC | App |
 
 Several studies can share one workbook, because login checks the study and the
 participant together. An ID leaked from one study will not work in another.
@@ -218,6 +221,13 @@ participant together. An ID leaked from one study will not work in another.
 login. Their local copy of their own history becomes unreadable, because the old
 PIN unwrapped its encryption key. The workbook keeps every row, so nothing is
 lost to the study.
+
+**To sign a device out without touching the PIN,** clear `device_token_hash`.
+The participant enters their PIN again on that device and keeps everything
+already stored there; nothing local is thrown away. This is a different,
+lighter reset than the PIN one above, and reaches for a different problem: use
+it for a lost or replaced phone, and the PIN reset only when the PIN itself is
+the problem.
 
 ---
 

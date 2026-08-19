@@ -3,7 +3,7 @@ This file is part of MiNap Go.
 docs/overview.md
 Author(s): Gabriel Mongefranco (@gabrielmongefranco), Abhiram V. (@abhiramvsmg)
 Created: 2026-06-25
-Last Modified: 2026-08-18
+Last Modified: 2026-08-19
 Summary: MiNap Go: a standalone, ready-to-run version of MiNap (sleep diary app for research) with no additional technology required. This file provides an overview of the project, in Markdown format.
 Notes: See README file for documentation and full license information.
 
@@ -59,8 +59,8 @@ lands.
 - The app asks for access to the one spreadsheet it is attached to, not to your Drive
 - Each study has its own Google Sheet
 - Participants must be listed on the ParticipantsSetup tab before they can log in, and a study ID from one study will not work in another
-- A participant also needs the PIN they chose at enrollment. The server checks it before accepting any submission, which is what stops someone logging entries under a Participant ID that is not theirs, and it locks the account after too many wrong guesses in a row
-- Participants can write data but cannot read or modify the Sheet directly. Sleep diary history that is vieweable by participants comes from the web app itself (browser cache), not the Sheet. That means if the participants clear their browser cache, log off from the app, or switch devices, they will lose access to their sleep diary history. The researcher can still view all data in the Sheet.
+- A participant also needs the PIN they chose at enrollment. It proves who they are at login and unlocks their on-device history; it locks the account after too many wrong guesses in a row. The PIN itself is not what the server checks on every submission -- that is a device token, minted at login and revocable by the researcher, so a stolen device does not hand over a PIN the participant may have reused elsewhere
+- Participants can write data but cannot read or modify the Sheet directly. Sleep diary history that is viewable by participants comes from the device's own storage, not the Sheet, and stays there across a logout: logging out signs the device out, it does not delete anything, so logging back in with the same PIN shows the same history again. That history is still only as durable as the browser's storage, though -- clearing the browser's data, or opening the app on a different device, starts that device with nothing local, even though the Sheet still holds every row the participant sent. The researcher can always view all of it there.
 
 ## Quick Start Guide
 

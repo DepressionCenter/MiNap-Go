@@ -5,7 +5,8 @@
 // Last Modified: 2026-08-19
 // Summary: Server-side Apps Script; declares the workbook layout, creates whatever part of it is
 //   missing including the Dashboard charts, serves the web app, checks participant logins and
-//   PINs, and records sleep and wake markers and survey answers.
+//   PINs, mints and checks the device tokens that authenticate writes, and records sleep and
+//   wake markers and survey answers.
 // Notes: See README file for documentation and full license information.
 //
 // Copyright © 2026 The Regents of the University of Michigan
@@ -65,8 +66,11 @@
  */
 
 /** Layout version stamped into StudySettings. Raise it only for a change that makes an
- *  existing workbook unreadable, because raising it locks every workbook built before it. */
-const SCHEMA_VERSION = 1;
+ *  existing workbook unreadable, because raising it locks every workbook built before it.
+ *  Raised to 2 for the three device-session columns on ParticipantsSetup (device_token_hash,
+ *  device_token_set_at, device_last_seen_utc): a version-1 workbook has nowhere to store the
+ *  token a write now authenticates against, so it is refused rather than silently accepted. */
+const SCHEMA_VERSION = 2;
 
 /** How the workbook spells a yes-or-no value. One spelling everywhere, so a researcher never
  *  has to remember which tab wanted TRUE and which wanted YES.
@@ -357,8 +361,10 @@ const WORKBOOK = {
             + 'forgotten or locked PIN, clear this cell, pin_salt, and failed_attempts. The '
             + 'participant is then asked to choose a new PIN at the next login, and the copy '
             + 'of their history on their own device becomes unreadable. The workbook keeps '
-            + 'the record, so nothing is lost to the study. Hidden by default; select its '
-            + 'column by name in the Name Box, or unhide columns D:H, to edit it by hand.' },
+            + 'the record, so nothing is lost to the study. This is a different reset from '
+            + 'device_token_hash below: clearing that one signs a device out without '
+            + 'touching the PIN or the history on it. Hidden by default; select its column '
+            + 'by name in the Name Box, or unhide columns D:K, to edit it by hand.' },
         { header: 'pin_salt', width: 200, hidden: true,
           note: 'A random value for this participant alone, written with the PIN. Clear it as '
             + 'part of a PIN reset.' },
@@ -369,7 +375,17 @@ const WORKBOOK = {
             + 'part of a PIN reset.' },
         { header: 'locked', width: 90, hidden: true,
           note: 'Yes once there have been too many wrong PINs in a row. To unlock, clear '
-            + 'pin_hash, pin_salt, and failed_attempts, which starts PIN setup again.' }
+            + 'pin_hash, pin_salt, and failed_attempts, which starts PIN setup again.' },
+        { header: 'device_token_hash', width: 260, hidden: true,
+          note: 'Identifies the one device this participant is signed in on, written by the '
+            + 'app. Clear this cell to sign that device out: the participant enters their '
+            + 'PIN again on it and keeps their history there. This is not the same as a PIN '
+            + 'reset above, which throws that history away.' },
+        { header: 'device_token_set_at', width: 170, hidden: true,
+          note: 'When that device signed in, in UTC. Written by the app.' },
+        { header: 'device_last_seen_utc', width: 170, hidden: true,
+          note: 'The last day this participant\'s device sent anything, in UTC. Written by '
+            + 'the app.' }
       ],
       defaultRows: []
     },
@@ -1436,8 +1452,9 @@ function getConfig() {
  * @param {string} studyId The Study ID to look for.
  * @param {string} participantId The Participant ID to look for.
  * @return {?{sheet: Sheet, row: number, columns: Object<string, number>, enabled: boolean,
- *     pinHash: string, pinSalt: string, failedAttempts: number, locked: boolean}} Null if the
- *     pair is not on the tab at all, or if nobody is enrolled yet.
+ *     pinHash: string, pinSalt: string, failedAttempts: number, locked: boolean,
+ *     deviceTokenHash: string, deviceTokenSetAt: string, deviceLastSeenUtc: string}} Null if
+ *     the pair is not on the tab at all, or if nobody is enrolled yet.
  */
 function findParticipantRow_(studyId, participantId) {
   if (!studyId || !participantId) return null;
@@ -1457,11 +1474,15 @@ function findParticipantRow_(studyId, participantId) {
     pin_salt: columnOf_(headerMap, 'pin_salt', tab.name),
     pin_set_at: columnOf_(headerMap, 'pin_set_at', tab.name),
     failed_attempts: columnOf_(headerMap, 'failed_attempts', tab.name),
-    locked: columnOf_(headerMap, 'locked', tab.name)
+    locked: columnOf_(headerMap, 'locked', tab.name),
+    device_token_hash: columnOf_(headerMap, 'device_token_hash', tab.name),
+    device_token_set_at: columnOf_(headerMap, 'device_token_set_at', tab.name),
+    device_last_seen_utc: columnOf_(headerMap, 'device_last_seen_utc', tab.name)
   };
   const width = Math.max(
     columns.study_id, columns.participant_id, columns.enabled, columns.pin_hash,
-    columns.pin_salt, columns.pin_set_at, columns.failed_attempts, columns.locked);
+    columns.pin_salt, columns.pin_set_at, columns.failed_attempts, columns.locked,
+    columns.device_token_hash, columns.device_token_set_at, columns.device_last_seen_utc);
   const rows = sh.getRange(2, 1, lastRow - 1, width).getValues();
 
   const wantedStudy = normalizeId_(studyId);
@@ -1481,7 +1502,10 @@ function findParticipantRow_(studyId, participantId) {
       pinHash: String(row[columns.pin_hash - 1] || ''),
       pinSalt: String(row[columns.pin_salt - 1] || ''),
       failedAttempts: Number(row[columns.failed_attempts - 1]) || 0,
-      locked: isYes_(row[columns.locked - 1])
+      locked: isYes_(row[columns.locked - 1]),
+      deviceTokenHash: String(row[columns.device_token_hash - 1] || ''),
+      deviceTokenSetAt: String(row[columns.device_token_set_at - 1] || ''),
+      deviceLastSeenUtc: String(row[columns.device_last_seen_utc - 1] || '')
     };
   }
   return null;
@@ -1568,12 +1592,18 @@ function constantTimeEquals_(a, b) {
  * locked -- guarding on it unconditionally would mean a reset account could never complete
  * setPin at all, since nothing would ever run to unlock it.
  *
+ * The device token minted below is unrelated to the PIN check above it: it is what
+ * authenticates every later write, per section 5.4 of the architecture specification, and a
+ * fresh one is minted here whether this call set a PIN for the first time or changed an
+ * existing one, so a PIN change never needs a separate re-login to keep writing.
+ *
  * @param {string} studyId The participant's Study ID.
  * @param {string} participantId The participant's Participant ID.
  * @param {string} newPin The PIN to store.
  * @param {string=} oldPin Required, and checked, only when a PIN is already on file.
- * @return {{ok: boolean, reason: (string|undefined)}} reason is one of 'invalid_login',
- *     'locked', 'wrong_pin', or 'pin_too_short' when ok is false.
+ * @return {{ok: boolean, reason: (string|undefined), deviceToken: (string|undefined)}} reason
+ *     is one of 'invalid_login', 'locked', 'wrong_pin', or 'pin_too_short' when ok is false.
+ *     deviceToken is set only when ok is true, and only ever returned this once.
  */
 function setPin(studyId, participantId, newPin, oldPin) {
   const participant = findParticipantRow_(studyId, participantId);
@@ -1590,42 +1620,27 @@ function setPin(studyId, participantId, newPin, oldPin) {
   }
 
   writePin_(participant, String(newPin));
-  return { ok: true };
+  return { ok: true, deviceToken: mintDeviceToken_(participant) };
 }
 
 /**
  * Client-callable: checks a PIN against the one on file, for logging back in on a device that
- * has already set one up.
+ * has already set one up. Mints a fresh device token on success, on the same terms as setPin.
  *
  * @param {string} studyId The participant's Study ID.
  * @param {string} participantId The participant's Participant ID.
  * @param {string} pin The PIN as typed.
- * @return {{ok: boolean, reason: (string|undefined)}} reason is one of 'invalid_login',
- *     'not_set', 'locked', or 'wrong_pin' when ok is false.
+ * @return {{ok: boolean, reason: (string|undefined), deviceToken: (string|undefined)}} reason
+ *     is one of 'invalid_login', 'not_set', 'locked', or 'wrong_pin' when ok is false.
+ *     deviceToken is set only when ok is true, and only ever returned this once.
  */
 function verifyPin(studyId, participantId, pin) {
   const participant = findParticipantRow_(studyId, participantId);
   if (!participant || !participant.enabled) return { ok: false, reason: 'invalid_login' };
   if (!participant.pinHash) return { ok: false, reason: 'not_set' };
-  return checkPin_(participant, pin);
-}
-
-/**
- * Confirms a write is allowed before anything is stored: the pair must be enabled, a PIN must
- * already be on file, and the PIN sent with the request must check out. This is what stops
- * someone submitting entries under a Participant ID that is not theirs, per section 5.3 of the
- * architecture specification.
- *
- * @param {string} studyId The Study ID the request claims.
- * @param {string} participantId The Participant ID the request claims.
- * @param {string} pin The PIN sent with the request.
- * @return {{ok: boolean, reason: (string|undefined)}} Same shape as verifyPin.
- */
-function authenticateWrite_(studyId, participantId, pin) {
-  const participant = findParticipantRow_(studyId, participantId);
-  if (!participant || !participant.enabled) return { ok: false, reason: 'invalid_login' };
-  if (!participant.pinHash) return { ok: false, reason: 'not_set' };
-  return checkPin_(participant, pin);
+  const check = checkPin_(participant, pin);
+  if (!check.ok) return check;
+  return { ok: true, deviceToken: mintDeviceToken_(participant) };
 }
 
 /**
@@ -1683,6 +1698,172 @@ function writePin_(participant, pin) {
   sh.getRange(participant.row, c.pin_set_at).setValue(nowIso_());
   sh.getRange(participant.row, c.failed_attempts).setValue(0);
   sh.getRange(participant.row, c.locked).setValue(BOOL_NO);
+}
+
+/*
+ * ### Device Sessions ###
+ *
+ * A device token, not the PIN, is what authenticateWrite_ checks on every logMarker, logSurvey,
+ * and updateMarker call. The PIN's job stops at login and at a PIN change, per section 5.3 of
+ * the architecture specification: it proves who is signing in, and on the client it unwraps the
+ * local data key. Splitting the two means the app can stay signed in without ever holding the
+ * PIN, which is what lets it resume with no prompt (section 5.6).
+ *
+ * One device at a time: mintDeviceToken_ overwrites whatever token was already stored, which is
+ * what signs a previous device out. That is a deliberate simplification rather than an
+ * oversight -- with no read path, a newly signed-in device starts with no local history to
+ * protect anyway, so there is nothing for two devices to keep in step (section 5.4).
+ *
+ * A rejected token never touches failed_attempts or locked. Those counters belong to PIN
+ * guessing; a stale, cleared, or absent token is not evidence that anyone guessed anything, and
+ * must not be able to lock a participant out of their own account.
+ */
+
+/**
+ * A fresh device token: 256 bits of randomness, encoded as hex so it can travel in a browser
+ * call and, once hashed, sit in a plain spreadsheet cell.
+ *
+ * Built the same way randomPinSalt_ is, from two Utilities.getUuid() calls with the hyphens
+ * stripped. Apps Script backs getUuid() with a cryptographically strong random source rather
+ * than Math.random(), which is why it is reused here instead of a hand-rolled generator.
+ *
+ * @return {string} 64 hex characters.
+ */
+function randomDeviceToken_() {
+  return (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+}
+
+/**
+ * Hashes a device token for storage, with a single SHA-256 and no stretching.
+ *
+ * hashPin_ above stretches its input because a PIN is short and human-chosen, and stretching
+ * exists to slow an offline guess against exactly that kind of secret. A device token is 256
+ * bits from randomDeviceToken_: it is not guessed, only leaked, so stretching it would only cost
+ * roughly a second of script-lock time on every single write for no security benefit.
+ *
+ * @param {string} token The raw token.
+ * @return {string} The digest, as 64 hex characters.
+ */
+function hashDeviceToken_(token) {
+  return bytesToHex_(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, String(token)));
+}
+
+/**
+ * Mints a fresh device token for a participant and stores its hash, overwriting whatever token
+ * was on file. Called only from setPin and verifyPin, and only after each has already succeeded
+ * on its own terms, so a device only ever receives a token once it has proven it holds the right
+ * PIN.
+ *
+ * @param {Object} participant Result of findParticipantRow_.
+ * @return {string} The raw token, to send back to the browser that is signing in. Returned here
+ *     and never again: the Sheet keeps only the hash.
+ */
+function mintDeviceToken_(participant) {
+  const token = randomDeviceToken_();
+  const sh = participant.sheet;
+  const c = participant.columns;
+  sh.getRange(participant.row, c.device_token_hash).setValue(hashDeviceToken_(token));
+  sh.getRange(participant.row, c.device_token_set_at).setValue(nowIso_());
+  return token;
+}
+
+/**
+ * Today's calendar date in UTC. device_last_seen_utc records a day a device checked in, not an
+ * instant, so a night's worth of markers and one survey do not need finer resolution than this.
+ *
+ * @return {string} 'YYYY-MM-DD'.
+ */
+function todayUtcDate_() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Records the day a device last sent anything, so a researcher can see whether a participant's
+ * device is still checking in without reading the token cell itself. Writes only when the
+ * stored value is not already today's date, so an ordinary write costs no extra round trip to
+ * the spreadsheet once today's first one has landed.
+ *
+ * @param {Object} participant Result of findParticipantRow_.
+ */
+function touchDeviceLastSeen_(participant) {
+  const today = todayUtcDate_();
+  if (participant.deviceLastSeenUtc === today) return;
+  participant.sheet.getRange(participant.row, participant.columns.device_last_seen_utc)
+    .setValue(today);
+}
+
+/**
+ * Confirms a write is allowed before anything is stored: the pair must be enabled, and the
+ * device token sent with the request must match the one on file. This is what stops someone
+ * submitting entries under a Participant ID that is not theirs, per section 5.4 of the
+ * architecture specification -- the PIN plays no part in it.
+ *
+ * Never consults locked and never touches failed_attempts: those describe PIN guessing, and a
+ * device token is checked or rejected on its own terms.
+ *
+ * @param {string} studyId The Study ID the request claims.
+ * @param {string} participantId The Participant ID the request claims.
+ * @param {string} deviceToken The device token sent with the request.
+ * @return {{ok: boolean, reason: (string|undefined)}} reason is 'invalid_login' when the pair is
+ *     unknown or disabled, or 'device_not_recognized' when no token is on file, none was sent,
+ *     or the two do not match -- one reason for all three, because the participant's next step
+ *     is the same in each case: enter the PIN again on this device.
+ */
+function authenticateWrite_(studyId, participantId, deviceToken) {
+  const participant = findParticipantRow_(studyId, participantId);
+  if (!participant || !participant.enabled) return { ok: false, reason: 'invalid_login' };
+  if (!participant.deviceTokenHash || !deviceToken
+    || !constantTimeEquals_(hashDeviceToken_(deviceToken), participant.deviceTokenHash)) {
+    return { ok: false, reason: 'device_not_recognized' };
+  }
+  touchDeviceLastSeen_(participant);
+  return { ok: true };
+}
+
+/**
+ * Client-callable: whether this participant is still enabled and this device is still the one
+ * recognised for them. Used for the boot-time and screen-entry revalidation in section 5.6 of
+ * the architecture specification, and for nothing else -- checking is authoritative only on an
+ * explicit "no"; being unable to reach the server is never treated as one.
+ *
+ * Same checks as authenticateWrite_, and the exact same function: there is nothing this needs to
+ * do differently, since authenticateWrite_ already has no side effect beyond
+ * touchDeviceLastSeen_.
+ *
+ * @param {string} studyId The participant's Study ID.
+ * @param {string} participantId The participant's Participant ID.
+ * @param {string} deviceToken The device token this device was issued.
+ * @return {{ok: boolean, reason: (string|undefined)}} Same shape as authenticateWrite_.
+ */
+function checkSession(studyId, participantId, deviceToken) {
+  return authenticateWrite_(studyId, participantId, deviceToken);
+}
+
+/**
+ * Client-callable: signs a device out, called best-effort from the client on logout. Clears the
+ * stored token only when the one presented matches it, so a stale or forged call can never sign
+ * out a device that is not the caller's own.
+ *
+ * Always reports success. There is nothing actionable to tell the caller by distinguishing "no
+ * such participant" from "token already did not match": either way, the device that called this
+ * ends up signed out on the server's side of things, which is what logging out is for.
+ *
+ * @param {string} studyId The participant's Study ID.
+ * @param {string} participantId The participant's Participant ID.
+ * @param {string} deviceToken The device token this device was issued.
+ * @return {{ok: boolean}} Always {ok: true}.
+ */
+function signOutDevice(studyId, participantId, deviceToken) {
+  const participant = findParticipantRow_(studyId, participantId);
+  if (!participant || !participant.deviceTokenHash || !deviceToken) return { ok: true };
+  if (!constantTimeEquals_(hashDeviceToken_(deviceToken), participant.deviceTokenHash)) {
+    return { ok: true };
+  }
+  const sh = participant.sheet;
+  const c = participant.columns;
+  sh.getRange(participant.row, c.device_token_hash).setValue('');
+  sh.getRange(participant.row, c.device_token_set_at).setValue('');
+  return { ok: true };
 }
 
 /*
@@ -1879,15 +2060,15 @@ function repairPairedWakeSleepDay_(sh, headerMap, studyId, participantId, oldSle
  * updates the existing row instead of adding a second one, per section 14.1 of the
  * architecture specification, so a flaky connection can never duplicate a night.
  *
- * @param {Object} payload {study_id, participant_id, pin, record_id, marker, event_local,
- *     event_tz, event_utc, source, app_version}.
+ * @param {Object} payload {study_id, participant_id, device_token, record_id, marker,
+ *     event_local, event_tz, event_utc, source, app_version}.
  * @return {{ok: boolean, reason: (string|undefined), sleep_day: (string|undefined)}} reason is
- *     set only when ok is false: 'invalid_login', 'not_set', 'locked', 'wrong_pin', 'busy', or
+ *     set only when ok is false: 'invalid_login', 'device_not_recognized', 'busy', or
  *     'invalid_payload'.
  */
 function logMarker(payload) {
   payload = payload || {};
-  const auth = authenticateWrite_(payload.study_id, payload.participant_id, payload.pin);
+  const auth = authenticateWrite_(payload.study_id, payload.participant_id, payload.device_token);
   if (!auth.ok) return auth;
 
   if (!payload.record_id || (payload.marker !== 'SLEEP' && payload.marker !== 'WAKE')
@@ -1935,16 +2116,16 @@ function logMarker(payload) {
  * queued edit is judged fairly after time spent offline. Editing a SLEEP marker also recomputes
  * the sleep_day of the WAKE paired with it, so the two can never disagree.
  *
- * @param {Object} payload {study_id, participant_id, pin, record_id, event_local, event_tz,
- *     event_utc, client_edit_utc, source, app_version}. client_edit_utc is optional; a request
- *     made and answered online can leave it out and be judged by server time instead.
+ * @param {Object} payload {study_id, participant_id, device_token, record_id, event_local,
+ *     event_tz, event_utc, client_edit_utc, source, app_version}. client_edit_utc is optional; a
+ *     request made and answered online can leave it out and be judged by server time instead.
  * @return {{ok: boolean, reason: (string|undefined), sleep_day: (string|undefined)}} reason is
- *     set only when ok is false: 'invalid_login', 'not_set', 'locked', 'wrong_pin', 'busy',
+ *     set only when ok is false: 'invalid_login', 'device_not_recognized', 'busy',
  *     'invalid_payload', 'not_found', or 'edit_window_expired'.
  */
 function updateMarker(payload) {
   payload = payload || {};
-  const auth = authenticateWrite_(payload.study_id, payload.participant_id, payload.pin);
+  const auth = authenticateWrite_(payload.study_id, payload.participant_id, payload.device_token);
   if (!auth.ok) return auth;
 
   if (!payload.record_id || !payload.event_local || !payload.event_tz || !payload.event_utc) {
@@ -2050,19 +2231,19 @@ function lockQuestionsIfNeeded_() {
  * terms as logMarker. Accepts a survey with no answers and records why through end_reason, per
  * section 3.6 of the architecture specification.
  *
- * @param {Object} payload {study_id, participant_id, pin, survey_id, sleep_record_id,
+ * @param {Object} payload {study_id, participant_id, device_token, survey_id, sleep_record_id,
  *     wake_record_id, wake_marker_utc, survey_opened_utc, survey_ended_utc, end_reason,
  *     event_tz, tz_offset_minutes, source, app_version, answers}. Each entry in answers is
  *     {record_id, question_id, question_source, answer_type, question_text_shown, required,
  *     display_order, answer_order, value, value_number, value_unit, answered_utc, edited_utc,
  *     edit_count, time_to_answer_ms}.
  * @return {{ok: boolean, reason: (string|undefined), sleep_day: (string|undefined)}} reason is
- *     set only when ok is false: 'invalid_login', 'not_set', 'locked', 'wrong_pin', 'busy', or
+ *     set only when ok is false: 'invalid_login', 'device_not_recognized', 'busy', or
  *     'invalid_payload'.
  */
 function logSurvey(payload) {
   payload = payload || {};
-  const auth = authenticateWrite_(payload.study_id, payload.participant_id, payload.pin);
+  const auth = authenticateWrite_(payload.study_id, payload.participant_id, payload.device_token);
   if (!auth.ok) return auth;
 
   if (!payload.survey_id || !payload.survey_opened_utc

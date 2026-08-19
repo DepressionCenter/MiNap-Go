@@ -3,7 +3,7 @@ This file is part of MiNap Go
 docs/implementation-plan.md
 Author(s): Gabriel Mongefranco
 Created: 2026-08-17
-Last Modified: 2026-08-18
+Last Modified: 2026-08-19
 Summary: Five-phase build plan for MiNap Go version 1, with what each phase delivers and how to tell it is finished.
 Notes: See README file for documentation and full license information.
 
@@ -174,19 +174,51 @@ run against a live Google Sheet yet.
 
 ## Phase 3 — The app people actually use
 
-One core, running in both builds.
+One core, running in both builds. Five stages, in order, each testable on its own.
 
-**Deliverables**
+Storage, the login screens, and the PIN screens are already built. Partway through
+that work the design changed: the first pass asked for the PIN every time the app
+was reopened, which is friction against how a sleep diary is actually used, and
+the obvious fix — remembering the PIN — would have thrown away the only thing the
+PIN was introduced to do. Section 5.4 of the specification is the answer that came
+out of that, and stages 2 and 3 below build it.
 
-- Local storage in IndexedDB, encrypted, with the login PIN unwrapping the key in
-  the study build.
+**Stage 1 — the build.** `build.py --check` fails on a case-sensitive filesystem,
+because it reads `src/index.html` and the file is committed as `src/Index.html`.
+Rename the source file. The `gas/` output keeps its capitalised names, which is
+Apps Script convention and what the README tells a person to type.
+
+**Stage 2 — device sessions on the server.** Section 5.4. `ParticipantsSetup`
+gains `device_token_hash`, `device_token_set_at`, and `device_last_seen_utc`;
+`setPin` and `verifyPin` mint a token; `logMarker`, `logSurvey`, and
+`updateMarker` take that token in place of the PIN; `checkSession` and
+`signOutDevice` are added. This raises the schema version, which is a one-way
+change and possible only because no study exists yet.
+
+**Stage 3 — device sessions in the app.** Section 5.6. A second copy of the local
+data key wrapped under a device key the page can use but not read, the token
+stored under the same key, and a silent resume on startup. Log out deletes that
+copy and the token and nothing else. Nobody is signed out for being offline.
+
+**Stage 4 — markers and the diary.**
+
 - Sleep and wake markers, with unambiguous button labels and instructions.
+- Times stored as real local times with an offset.
 - The morning diary, with items 2 and 6 pre-filled from the markers and editable.
 - Question rendering for every answer type, including the 1-to-10 slider and its
   four rules.
-- The seven-day edit window for markers; add-missing-only for surveys.
-- The offline queue, and the rule that a rejected ID is never retried.
-- Times stored as real local times with an offset.
+- The seven-day edit window for markers; add-missing-only for surveys, completable
+  only while a survey holds no answers, per section 10.
+- `getConfig` returns the question list, so the survey can be rendered offline
+  from a cached copy.
+
+**Stage 5 — offline and polish.**
+
+- The offline queue, and the rule that a rejected ID is never retried. A queue
+  refused because the device was signed out is kept, not dropped, and sends after
+  the participant enters their PIN again.
+- Focus trap and focus restore on every dialog, including the two that never had
+  one.
 - Fix `.btn-primary`'s contrast in `styles.css`. White text on its
   violet-to-indigo gradient measures about 4.27:1 at the violet end -- under the
   4.5:1 AA threshold that applies here, since the button's 16px bold label is
@@ -195,7 +227,27 @@ One core, running in both builds.
   instead of this gradient for the same reason; carry that fix into the app.
 
 **Done when** a participant can log a night end to end, offline and online, on a
-phone, and the values in the Sheet match what they typed.
+phone, without being asked for a PIN they did not choose to be asked for, and the
+values in the Sheet match what they typed.
+
+**Check the device session by hand**, because none of it is caught by reading the
+code: reopen the app after a full browser restart with the network off and land on
+the home screen; log out and confirm the PIN is required and the history survives;
+sign in on a second device and confirm the first asks for the PIN again and has
+lost nothing; clear `device_token_hash` in the Sheet and confirm the same; set
+`enabled` to `No` and confirm the next write is refused.
+
+**Check that a non-extractable key can be stored** before relying on it, per
+section 19. Desktop Chrome inside the Apps Script frame is measured and passes,
+including across a reload. Two cases remain: iOS Safari, and whether publishing a
+new version of the deployment changes the frame's origin. Test the second by
+deploying a new version of the scratch project and re-running the same page; if
+the origin moves, every participant's local copy is orphaned by a redeployment
+and the participant instructions have to say so.
+
+Ask for persistent storage after the first successful sign-in, in both builds.
+The study build turns out to be able to get it, at least sometimes. Treat a
+refusal as ordinary.
 
 ---
 
@@ -267,9 +319,15 @@ README tab by hand (outstanding item above) and the live-deployment verification
 neither this change nor the phase before it has had a chance to run. The workbook
 layout is declared in one place and built from that declaration, and the server
 now records markers and surveys into it, computes `sleep_day`, checks PINs, and
-draws the four researcher charts. The next work is Phase 3: the participant-facing
-screens that call `logMarker`, `logSurvey`, `setPin`, and `updateMarker`, without
-which the server can record data but nothing yet asks it to.
+draws the four researcher charts.
+
+Phase 3 is under way. Local storage, the login screens, and the PIN screens exist;
+the participant-facing screens that call `logMarker`, `logSurvey`, and
+`updateMarker` do not yet, so the server can record data but nothing asks it to.
+The device-session work in stages 2 and 3 is a correction made during the phase
+rather than a late addition: it is what lets the app stay signed in without
+keeping the participant's PIN, and it changes the Sheet, which is why it happens
+now and could not happen after a study starts.
 
 ## Additional resources
 
