@@ -2,9 +2,10 @@
 // edit-window.js
 // Author(s): Gabriel Mongefranco
 // Created: 2026-08-18
-// Last Modified: 2026-08-18
+// Last Modified: 2026-08-19
 // Summary: Edit-window validation -- whether a logged Sleep/Wake time is still recent enough
-//   to edit. No browser or Apps Script globals; identical in both builds.
+//   to edit, and whether a skipped or missing survey is still recent enough to complete. No
+//   browser or Apps Script globals; identical in both builds.
 // Notes: See README file for documentation and full license information.
 //
 // Copyright © 2026 The Regents of the University of Michigan
@@ -25,5 +26,19 @@ var editWindowDays = 7; // fallback until server config loads (see loadConfig)
 function isEditable(ev) {
   if (!ev) return false;
   var ageDays = (Date.now() - Number(ev.event_epoch_ms)) / 86400000;
+  return ageDays <= editWindowDays;
+}
+
+// Mirrors the server's daysSinceSleepDay_: whole calendar days between a sleep_day and today,
+// with no time-of-day component -- a survey is measured by the night it describes, not by an
+// instant, the same "measured from the stored value" principle isEditable applies to markers.
+// Lets the history screen hide a completion entry point before ever asking the server, using the
+// same day count logSurvey's own guard enforces.
+function isSleepDayCompletable(sleepDay) {
+  var s = String(sleepDay).split('-').map(Number);
+  var sleepDayUtc = Date.UTC(s[0], s[1] - 1, s[2]);
+  var t = new Date().toISOString().slice(0, 10).split('-').map(Number);
+  var todayUtc = Date.UTC(t[0], t[1] - 1, t[2]);
+  var ageDays = Math.round((todayUtc - sleepDayUtc) / 86400000);
   return ageDays <= editWindowDays;
 }

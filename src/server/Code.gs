@@ -1432,10 +1432,58 @@ function validateLogin(studyId, participantId) {
  * Client-callable: the settings the interface needs, so that no constant is copied into the
  * client and left to drift.
  *
- * @return {{editWindowDays: number, appVersion: string}} The settings.
+ * @return {{editWindowDays: number, appVersion: string, questions: Array<Object>}} The
+ *     settings. questions is every visible QuestionsSetup row, in display order.
  */
 function getConfig() {
-  return { editWindowDays: readEditWindowDays_(), appVersion: APP_VERSION };
+  return {
+    editWindowDays: readEditWindowDays_(),
+    appVersion: APP_VERSION,
+    questions: visibleQuestions_()
+  };
+}
+
+/**
+ * Reads every visible question from QuestionsSetup, sorted the way the survey shows them.
+ * Columns are resolved by the sheet's own live header row, the same as every other read in this
+ * file, so a column a researcher renamed or reordered is still found correctly.
+ *
+ * @return {Array<Object>} One entry per visible question: {question_id, display_text,
+ *     answer_type, min_value, max_value, input_style, min_label, max_label, unit,
+ *     prefill_from, required, sort_order}.
+ */
+function visibleQuestions_() {
+  const tab = tabDeclaration_('QuestionsSetup');
+  const sh = getSpreadsheet_().getSheetByName(tab.name);
+  const headerMap = sheetHeaderMap_(sh);
+  const columnNames = ['question_id', 'display_text', 'answer_type', 'min_value', 'max_value',
+    'input_style', 'min_label', 'max_label', 'unit', 'prefill_from', 'required', 'sort_order',
+    'visible'];
+  const positions = {};
+  columnNames.forEach(function (name) { positions[name] = columnOf_(headerMap, name, tab.name); });
+  const width = Math.max.apply(null, columnNames.map(function (name) { return positions[name]; }));
+  const lastRow = sh.getLastRow();
+  const rows = lastRow >= 2 ? sh.getRange(2, 1, lastRow - 1, width).getValues() : [];
+
+  return rows
+    .filter(function (row) { return isYes_(row[positions.visible - 1]); })
+    .map(function (row) {
+      return {
+        question_id: String(row[positions.question_id - 1]),
+        display_text: String(row[positions.display_text - 1]),
+        answer_type: String(row[positions.answer_type - 1]),
+        min_value: row[positions.min_value - 1],
+        max_value: row[positions.max_value - 1],
+        input_style: String(row[positions.input_style - 1] || ''),
+        min_label: String(row[positions.min_label - 1] || ''),
+        max_label: String(row[positions.max_label - 1] || ''),
+        unit: String(row[positions.unit - 1] || ''),
+        prefill_from: String(row[positions.prefill_from - 1] || ''),
+        required: isYes_(row[positions.required - 1]),
+        sort_order: Number(row[positions.sort_order - 1]) || 0
+      };
+    })
+    .sort(function (a, b) { return a.sort_order - b.sort_order; });
 }
 
 /**
@@ -1923,6 +1971,34 @@ function sleepDayFromUtcAndOffset_(utcIso, offsetMinutes) {
     local.getUTCFullYear(), local.getUTCMonth() + 1, local.getUTCDate(), local.getUTCHours());
 }
 
+/**
+ * A 'YYYY-MM-DD' string read as a calendar date with no time-of-day component, so two dates can
+ * be subtracted without either one's local time of day (which sleep_day never carries) leaking
+ * into the comparison.
+ *
+ * @param {string} dateOnly 'YYYY-MM-DD'.
+ * @return {number} Epoch milliseconds of that date at UTC midnight. Never a real instant; a
+ *     fixed point for date arithmetic only.
+ */
+function parseDateOnlyUtc_(dateOnly) {
+  const parts = String(dateOnly).split('-');
+  return Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+}
+
+/**
+ * Whole calendar days between a stored sleep_day and today. Applies edit_window_days to the
+ * night a survey describes rather than to an instant -- the same "measured from the value
+ * already stored, not a moving target" principle section 10 of the architecture specification
+ * applies to marker edits, extended here from a timestamp to a date.
+ *
+ * @param {string} sleepDay 'YYYY-MM-DD'.
+ * @return {number} Today minus sleepDay, in whole days. Zero for tonight's own night.
+ */
+function daysSinceSleepDay_(sleepDay) {
+  const today = nowIso_().slice(0, 10);
+  return Math.round((parseDateOnlyUtc_(today) - parseDateOnlyUtc_(sleepDay)) / 86400000);
+}
+
 /** How many SleepDiary rows a WAKE's paired-SLEEP lookup scans backward before giving up and
  *  falling back to the noon rule on the WAKE's own time. Bounds the cost of the lookup so it
  *  does not grow with the size of the study; a real gap this wide means the pairing was already
@@ -2229,17 +2305,23 @@ function lockQuestionsIfNeeded_() {
  *
  * Idempotent on survey_id (the Surveys row) and on each answer's own record_id, on the same
  * terms as logMarker. Accepts a survey with no answers and records why through end_reason, per
- * section 3.6 of the architecture specification.
+ * section 3.6 of the architecture specification. Once a survey is locked -- submitted, or ended
+ * with at least one answer given -- a later call with the same survey_id is refused rather than
+ * silently overwriting it, which is what keeps "survey answers are never editable" (section 10)
+ * from being reachable by resending the same survey_id with different answers.
  *
- * @param {Object} payload {study_id, participant_id, device_token, survey_id, sleep_record_id,
- *     wake_record_id, wake_marker_utc, survey_opened_utc, survey_ended_utc, end_reason,
- *     event_tz, tz_offset_minutes, source, app_version, answers}. Each entry in answers is
- *     {record_id, question_id, question_source, answer_type, question_text_shown, required,
- *     display_order, answer_order, value, value_number, value_unit, answered_utc, edited_utc,
- *     edit_count, time_to_answer_ms}.
+ * @param {Object} payload {study_id, participant_id, device_token, survey_id, target_sleep_day,
+ *     sleep_record_id, wake_record_id, wake_marker_utc, survey_opened_utc, survey_ended_utc,
+ *     end_reason, event_tz, tz_offset_minutes, source, app_version, answers}. target_sleep_day
+ *     names the night a brand-new survey_id describes -- required to complete a survey
+ *     retroactively, since there is no other way to know which night is meant -- and ignored
+ *     once a Surveys row for this survey_id already exists, which keeps the night it has always
+ *     had. Each entry in answers is {record_id, question_id, question_source, answer_type,
+ *     question_text_shown, required, display_order, answer_order, value, value_number,
+ *     value_unit, answered_utc, edited_utc, edit_count, time_to_answer_ms}.
  * @return {{ok: boolean, reason: (string|undefined), sleep_day: (string|undefined)}} reason is
- *     set only when ok is false: 'invalid_login', 'device_not_recognized', 'busy', or
- *     'invalid_payload'.
+ *     set only when ok is false: 'invalid_login', 'device_not_recognized', 'busy',
+ *     'invalid_payload', 'already_answered', or 'edit_window_expired'.
  */
 function logSurvey(payload) {
   payload = payload || {};
@@ -2261,9 +2343,29 @@ function logSurvey(payload) {
     const answersSheet = ss.getSheetByName(answersTab.name);
     const surveysHeaderMap = sheetHeaderMap_(surveysSheet);
     const answersHeaderMap = sheetHeaderMap_(answersSheet);
-
     const offsetMinutes = Number(payload.tz_offset_minutes) || 0;
-    const sleepDay = sleepDayFromUtcAndOffset_(payload.survey_opened_utc, offsetMinutes);
+
+    // A locked survey (submitted, or ended with at least one answer) keeps the sleep_day it has
+    // always had, regardless of what target_sleep_day says -- the night a survey describes never
+    // changes once it exists. An unlocked or brand-new row uses the night the caller names,
+    // falling back to today's own rule only when the caller names none at all.
+    const existing = findRowByKey_(surveysSheet, surveysHeaderMap, 'survey_id', payload.survey_id,
+      surveysTab.name);
+    let sleepDay;
+    if (existing) {
+      const locked = existing.end_reason === 'submitted'
+        || ((existing.end_reason === 'skipped' || existing.end_reason === 'abandoned')
+          && Number(existing.answered_count) > 0);
+      if (locked) return { ok: false, reason: 'already_answered' };
+      sleepDay = String(existing.sleep_day);
+    } else {
+      sleepDay = payload.target_sleep_day
+        || sleepDayFromUtcAndOffset_(payload.survey_opened_utc, offsetMinutes);
+    }
+    if (daysSinceSleepDay_(sleepDay) > readEditWindowDays_()) {
+      return { ok: false, reason: 'edit_window_expired' };
+    }
+
     const receivedUtc = nowIso_();
     const answeredCount = payload.answers.filter(function (a) { return a && a.answered_utc; }).length;
     const editCountTotal = payload.answers.reduce(

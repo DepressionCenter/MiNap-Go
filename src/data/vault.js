@@ -5,8 +5,9 @@
 // Last Modified: 2026-08-19
 // Summary: The local identity and encrypted-storage layer. Ties crypto.js and storage.js
 //   together: which IndexedDB record belongs to which participant, unlocking and locking the
-//   in-memory data key and device token, and reading/writing the encrypted history, queue, and
-//   cached config collections. Nothing above this file reads or writes storage.js directly.
+//   in-memory data key and device token, and reading/writing the encrypted history, surveys,
+//   queue, and cached config collections. Nothing above this file reads or writes storage.js
+//   directly.
 // Notes: See README file for documentation and full license information.
 //
 // Copyright © 2026 The Regents of the University of Michigan
@@ -378,7 +379,7 @@ function logout(studyId, participantId) {
 // not wired to any button in Phase 3 -- kept for completeness, not as a "forget this device"
 // feature nobody has asked for.
 function wipeProfile(studyId, participantId) {
-  return Promise.all(['profile', 'history', 'queue', 'cachedConfig', 'device_key'].map(function (name) {
+  return Promise.all(['profile', 'history', 'surveys', 'queue', 'cachedConfig', 'device_key'].map(function (name) {
     return deleteRecord(collectionKey(studyId, participantId, name));
   }));
 }
@@ -412,6 +413,22 @@ function setQueue(arr) {
 }
 function updateQueue(mutatorFn) {
   return updateCollection('queue', mutatorFn, []);
+}
+
+// Local record of every survey this device knows about, keyed within the array by survey_id --
+// not by night, because a night can outlive several attempts (skipped, then completed later)
+// under the same survey_id. This is what lets history.js and survey.js tell "skipped, still
+// completable" apart from "submitted, locked" without asking the server, and what the
+// completion flow reads to decide whether it is starting fresh or resuming a draft.
+function getSurveys() {
+  if (!session) return Promise.reject(new Error('locked'));
+  return readEncrypted(session.dataKey, collectionKey(session.studyId, session.participantId, 'surveys'), []);
+}
+function setSurveys(arr) {
+  return updateSurveys(function () { return arr; });
+}
+function updateSurveys(mutatorFn) {
+  return updateCollection('surveys', mutatorFn, []);
 }
 
 // Cached copy of getConfig()'s last successful result (edit window + question list), read

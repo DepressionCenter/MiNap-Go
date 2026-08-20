@@ -40,7 +40,12 @@ var REASON_MESSAGES = {
   pin_too_short: 'Choose a PIN of at least ' + PIN_MIN_LENGTH + ' digits.',
   not_set: 'No PIN is on file yet for this participant.',
   device_not_recognized: 'Please enter your PIN again on this device.',
-  offline: 'You need a connection to do this. Check your connection and try again.'
+  offline: 'You need a connection to do this. Check your connection and try again.',
+  already_answered: 'This diary was already completed.',
+  edit_window_expired: 'This is too old to edit or complete now.',
+  not_found: 'That entry could not be found. It may have been removed.',
+  busy: 'The study server is busy right now. This will be sent automatically shortly.',
+  invalid_payload: 'This entry could not be sent. Please contact your study team.'
 };
 
 var MSG_LOGIN_FAILED = 'Unable to log in. Please verify the Study ID and Participant ID are correct.';
@@ -360,11 +365,27 @@ async function boot() {
   });
   document.getElementById('btn-back').addEventListener('click', function () { show('screen-home'); applyHomeState(); });
   document.getElementById('history-list').addEventListener('click', function (e) {
-    var btn = e.target.closest('.edit-time');
-    if (btn) openEditor(btn.getAttribute('data-id'));
+    var editBtn = e.target.closest('.edit-time');
+    if (editBtn) { openEditor(editBtn.getAttribute('data-id')); return; }
+    var completeBtn = e.target.closest('.complete-survey');
+    if (completeBtn) beginCompletion(completeBtn.getAttribute('data-sleep-day'));
   });
   document.getElementById('btn-edit-cancel').addEventListener('click', closeEditor);
   document.getElementById('btn-edit-save').addEventListener('click', saveEditor);
+
+  document.getElementById('survey-questions').addEventListener('input', onSurveyInput);
+  document.getElementById('survey-questions').addEventListener('change', onSurveyChange);
+  document.getElementById('survey-questions').addEventListener('click', onSurveyStep);
+  document.getElementById('btn-survey-submit').addEventListener('click', doSurveySubmit);
+  document.getElementById('btn-survey-skip').addEventListener('click', doSurveySkip);
+  document.getElementById('btn-survey-cancel').addEventListener('click', doSurveyCancel);
+
+  // Retries whatever is still queued the moment connectivity returns, rather than waiting for
+  // the participant to reopen the app or visit History. A no-op with no active session (nothing
+  // queued can exist before someone has signed in on this device).
+  window.addEventListener('online', function () {
+    if (getSessionIdentity()) flushQueue();
+  });
 
   var last = await getLastIdentity();
   if (last) {
@@ -382,31 +403,74 @@ async function boot() {
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
 else boot();
 
-function pairNights(events) {
-  var asc = events.slice().sort(function (a, b) { return a.event_epoch_ms - b.event_epoch_ms; });
-  var nights = [];
-  var openSleep = null;
-  asc.forEach(function (e) {
-    if (e.event_type === 'SLEEP') {
-      if (openSleep) nights.push({ sleep: openSleep, wake: null });
-      openSleep = e;
-    } else {
-      nights.push({ sleep: openSleep, wake: e });
-      openSleep = null;
-    }
-  });
-  if (openSleep) nights.push({ sleep: openSleep, wake: null });
-  return nights.reverse();
+var FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), textarea:not([disabled]), ' +
+  'input:not([disabled]):not([type="hidden"]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+// One dialog at a time is all this app ever opens, so a single module-level record of what is
+// trapped and what to return focus to is enough -- no stack needed.
+var focusTrapState = null;
+
+function visibleFocusable(container) {
+  return Array.prototype.slice.call(container.querySelectorAll(FOCUSABLE_SELECTOR))
+    .filter(function (el) { return el.offsetParent !== null; });
 }
 
-function timeField(ev, label) {
+function trapKeydown(e) {
+  if (e.key !== 'Tab' || !focusTrapState) return;
+  var focusable = visibleFocusable(focusTrapState.container);
+  if (!focusable.length) return;
+  var first = focusable[0], last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+
+// Marks container as the active dialog: sets aria-modal, remembers what had focus so it can be
+// restored, moves focus inside, and starts trapping Tab/Shift+Tab within it. Safe to call again
+// on the same container while it is already trapped -- the edit and change-PIN modals are
+// re-opened rather than re-rendered while visible, so this mainly guards against a stray
+// double call.
+function trapFocus(container) {
+  if (focusTrapState && focusTrapState.container === container) return;
+  releaseFocus();
+  container.setAttribute('aria-modal', 'true');
+  container.addEventListener('keydown', trapKeydown);
+  focusTrapState = { trigger: document.activeElement, container: container };
+  var target = visibleFocusable(container)[0] || container;
+  target.focus();
+}
+
+// Removes the trap and returns focus to whatever opened the dialog, if it is still in the page --
+// a participant who closed a dialog that replaced its own trigger (rare in this app, but cheap
+// to guard) simply keeps whatever focus the close action already set.
+function releaseFocus() {
+  if (!focusTrapState) return;
+  focusTrapState.container.removeEventListener('keydown', trapKeydown);
+  focusTrapState.container.removeAttribute('aria-modal');
+  var trigger = focusTrapState.trigger;
+  focusTrapState = null;
+  if (trigger && document.body.contains(trigger) && typeof trigger.focus === 'function') {
+    trigger.focus();
+  }
+}
+
+// The night a pair of markers describes, for deciding whether a completion entry point applies
+// and for matching it to a locally-known survey record. Mirrors assignSleepDay_ on the server:
+// a SLEEP names its own night directly; a WAKE with no SLEEP on this device falls back to the
+// noon rule on its own local time.
+function nightSleepDay(hist, night) {
+  if (night.sleep) return sleepDayFromLocal(night.sleep.event_local);
+  if (night.wake) return findPrecedingSleepDayLocal(hist, night.wake.event_epoch_ms, night.wake.event_local);
+  return null;
+}
+
+function timeField(ev, label, queuedIds) {
   var text = label + ' ' + fmtTime(ev);
   if (!ev) return text;
-  var edited = ev.edited === 'TRUE' || ev.edited === true;
-  if (edited) text += '<sup>*</sup>';
+  if (ev.edited) text += '<sup>*</sup>';
+  if (queuedIds && queuedIds[ev.record_id]) text += ' <span class="not-sent">Not yet sent</span>';
   var extra = '';
   if (isEditable(ev)) {
-    extra = ' <button type="button" class="edit-time' + (edited ? ' edited' : '') + '" data-id="' + ev.record_id + '" ' +
+    extra = ' <button type="button" class="edit-time' + (ev.edited ? ' edited' : '') + '" data-id="' + ev.record_id + '" ' +
       'aria-label="Edit ' + label.toLowerCase() + ' time">&#9998;</button>';
   }
   return text + extra;
@@ -420,6 +484,10 @@ async function renderHistory() {
     return;
   }
   var nights = pairNights(hist);
+  var surveys = await getSurveys();
+  var queuedIds = await queuedRecordIds();
+  var queuedSurveys = await queuedSurveyIds();
+
   box.innerHTML = nights.map(function (n) {
     var anchor = n.sleep || n.wake;
     var pill;
@@ -430,14 +498,42 @@ async function renderHistory() {
     } else {
       pill = '<span class="pill open">' + (n.sleep ? 'in progress' : 'wake only') + '</span>';
     }
+
+    var sleepDay = nightSleepDay(hist, n);
+    var record = sleepDay ? surveys.filter(function (s) { return s.sleep_day === sleepDay; })[0] : null;
+    var completion = '';
+    if (n.wake && sleepDay && !isSurveyLocked(record) && isSleepDayCompletable(sleepDay)) {
+      completion = '<button type="button" class="complete-survey" data-sleep-day="' + sleepDay + '">' +
+        (record ? 'Finish diary' : 'Add diary') + '</button>';
+    } else if (record && isSurveyLocked(record)) {
+      completion = '<span class="survey-done">Diary ' + escapeHtml(record.end_reason) +
+        (queuedSurveys[record.survey_id] ? ' &middot; <span class="not-sent">Not yet sent</span>' : '') +
+        '</span>';
+    }
+
     return '' +
       '<div class="night">' +
         '<div>' +
           '<div class="date">' + fmtDate(anchor) + '</div>' +
-          '<div class="times">' + timeField(n.sleep, 'Sleep') + ' &middot; ' + timeField(n.wake, 'Wake') + '</div>' +
+          '<div class="times">' + timeField(n.sleep, 'Sleep', queuedIds) + ' &middot; ' + timeField(n.wake, 'Wake', queuedIds) + '</div>' +
+          completion +
         '</div>' + pill +
       '</div>';
   }).join('');
+}
+
+// ----- completing a skipped or missing survey from the history list -----
+
+async function beginCompletion(sleepDay) {
+  var hist = await getHistory();
+  var nights = pairNights(hist);
+  var match = nights.filter(function (n) { return nightSleepDay(hist, n) === sleepDay; })[0];
+  if (!match) return;
+  var surveys = await getSurveys();
+  var existingRecord = surveys.filter(function (s) { return s.sleep_day === sleepDay; })[0] || null;
+  openSurveyForCompletion({
+    sleepDay: sleepDay, sleepEvent: match.sleep, wakeEvent: match.wake, existingRecord: existingRecord
+  });
 }
 
 // ----- editing a previous entry's date/time -----
@@ -456,7 +552,7 @@ async function openEditor(recordId) {
   if (!ev || !isEditable(ev)) return;
   editingRecordId = recordId;
   document.getElementById('edit-modal-title').textContent =
-    'Edit ' + (ev.event_type === 'SLEEP' ? 'sleep' : 'wake') + ' time';
+    'Edit ' + (ev.marker === 'SLEEP' ? 'sleep' : 'wake') + ' time';
   document.getElementById('edit-datetime').value = toDatetimeLocalValue(ev.event_epoch_ms, ev.event_tz);
   openModal('edit-modal');
 }
@@ -466,11 +562,11 @@ function closeEditor() {
   closeModal('edit-modal');
 }
 
-async function applyServerUpdate(saved) {
-  if (!saved) return;
+async function applyLocalUpdate(updated) {
+  if (!updated) return;
   await updateHistory(function (hist) {
     for (var i = 0; i < hist.length; i++) {
-      if (hist[i].record_id === saved.record_id) { hist[i] = saved; break; }
+      if (hist[i].record_id === updated.record_id) { hist[i] = updated; break; }
     }
     return hist;
   });
@@ -478,43 +574,31 @@ async function applyServerUpdate(saved) {
 
 async function saveEditor() {
   var ev = await findHistEvent(editingRecordId);
-  var identity = getSessionIdentity();
-  if (!ev || !identity) { closeEditor(); return; }
+  if (!ev || !getSessionIdentity()) { closeEditor(); return; }
 
   var val = document.getElementById('edit-datetime').value; // "YYYY-MM-DDTHH:mm"
   var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(val || '');
   if (!m) { toast('Enter a valid date and time'); return; }
 
   var epoch = epochFromWallTime(Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5]), ev.event_tz);
-  var d = new Date(epoch);
-  var updated = {
-    record_id: ev.record_id,
-    study_id: identity.studyId,
-    participant_id: identity.participantId,
+  var clientEditUtc = new Date().toISOString();
+  var updated = Object.assign({}, ev, {
     event_epoch_ms: epoch,
-    event_iso_utc: d.toISOString(),
-    event_tz: ev.event_tz,
-    event_local: d.toLocaleString('en-US', { timeZone: ev.event_tz, hour12: true })
-  };
+    event_utc: new Date(epoch).toISOString(),
+    event_local: toLocalIsoWithOffset(epoch, ev.event_tz),
+    edited: true
+  });
 
-  // Show the edit immediately (same optimistic-first pattern as logging a new event);
-  // the server round-trip below reconciles with the authoritative row afterward.
-  await applyServerUpdate(Object.assign({}, ev, updated, { edited: 'TRUE' }));
+  // Show the edit immediately, the same optimistic-first pattern recordEvent uses for a new
+  // marker. The queued request below reconciles with the server's authoritative row once it
+  // lands, whether that is now or after the app is next online.
+  await applyLocalUpdate(updated);
   closeEditor();
   renderHistory();
 
-  var btn = document.getElementById('btn-edit-save');
-  btn.disabled = true;
-  updateEvent(updated, function (res) {
-    btn.disabled = false;
-    if (res && res.invalid) { toast(REASON_MESSAGES.invalid_login); return; }
-    applyServerUpdate(res && res.row);
-    renderHistory();
-    toast('Time updated');
-  }, function () {
-    btn.disabled = false;
-    toast('Could not save. Try again.');
-  });
+  await enqueue('marker_edit', { event: updated, client_edit_utc: clientEditUtc });
+  flushQueue();
+  toast('Time updated. Sending…');
 }
 
 // Iterates every element carrying the .screen class rather than a hardcoded id list, so a new
@@ -525,17 +609,22 @@ function show(id) {
   });
 }
 function showOverlay(on) {
-  document.getElementById('sleep-overlay').classList.toggle('hidden', !on);
+  var el = document.getElementById('sleep-overlay');
+  el.classList.toggle('hidden', !on);
+  if (on) trapFocus(el); else releaseFocus();
 }
 
-// Shows/hides one of the modal dialogs. Focus-trap and focus-restore are not implemented yet;
-// every dialog in the app is meant to route through these two functions so that work only has
-// to be written once.
+// Shows/hides one of the modal dialogs, trapping and restoring focus around it. Every dialog in
+// the app routes through these two functions, so that work is written once rather than per
+// dialog.
 function openModal(id) {
-  document.getElementById(id).classList.remove('hidden');
+  var el = document.getElementById(id);
+  el.classList.remove('hidden');
+  trapFocus(el);
 }
 function closeModal(id) {
   document.getElementById(id).classList.add('hidden');
+  releaseFocus();
 }
 
 var toastTimer = null;
@@ -584,16 +673,18 @@ function sessionForBuildEvent(identity) {
 async function computeState() {
   var hist = await getHistory();
   if (!hist.length) return 'AWAKE';
-  return hist[0].event_type === 'SLEEP' ? 'SLEEPING' : 'AWAKE';
+  return hist[0].marker === 'SLEEP' ? 'SLEEPING' : 'AWAKE';
 }
 
 // The open SLEEP event, if the user is currently asleep.
 async function topSleep() {
   var hist = await getHistory();
-  return (hist.length && hist[0].event_type === 'SLEEP') ? hist[0] : null;
+  return (hist.length && hist[0].marker === 'SLEEP') ? hist[0] : null;
 }
 
-// If asleep for >= AUTO_WAKE_HOURS, auto-log a wake on app open.
+// If asleep for >= AUTO_WAKE_HOURS, auto-log a wake on app open. Does not open the survey --
+// the participant did not just tap Wake, so nothing has established they are present to answer
+// it. The night stays completable later through history's completion entry point.
 async function maybeAutoWake() {
   var sleep = await topSleep();
   if (!sleep) return false;
@@ -631,6 +722,9 @@ async function renderStatus() {
   chip.textContent = (await computeState()) === 'SLEEPING' ? 'Are you ready to wake up?' : 'Are you going to sleep?';
 }
 
+// Tapping Sleep means "I am trying to go to sleep now" -- not bedtime, and not lights-out.
+// Getting into and out of bed are separate questions in the morning diary (architecture.md
+// section 3.4.2).
 async function onSleep() {
   var identity = getSessionIdentity();
   if (!identity) { show('screen-login'); return; }
@@ -639,46 +733,631 @@ async function onSleep() {
   applyHomeState();
 }
 
+// Tapping Wake means "I woke up for the last time" -- getting out of bed is asked separately as
+// Q07. Opens the morning survey immediately, prefilled from this WAKE and the SLEEP it closes,
+// per architecture.md section 3.4.2.
 async function onWake() {
   var identity = getSessionIdentity();
   if (!identity) { show('screen-login'); return; }
-  await recordEvent(buildEvent('WAKE', sessionForBuildEvent(identity)));
-  toast('Good morning. Wake logged ' + fmtClock(Date.now(), identity.tz));
-  applyHomeState();
+  var sleepEvent = await topSleep(); // read before recording, which flips the computed state
+  var wakeEvent = buildEvent('WAKE', sessionForBuildEvent(identity));
+  await recordEvent(wakeEvent);
+  showOverlay(false);
+  openSurveyForNight(sleepEvent, wakeEvent);
 }
 
-// Drain the offline queue one item at a time; a failure halts the drain until the next call.
-// The real drain engine (idempotent dispatch by kind, never-retry-on-revoke) is not implemented
-// yet -- this keeps today's shape, only made async, so the app keeps running end to end in the
-// meantime.
+// Appends a raw marker/edit/survey draft to the offline queue. The queued payload never carries
+// a credential -- toLogMarkerPayload/toUpdateMarkerPayload/toLogSurveyPayload attach the current
+// device token only at send time, so a queue item sitting on disk for days is never a stored
+// secret.
+function enqueue(kind, payload) {
+  return updateQueue(function (q) {
+    q.push({ queue_id: uuid(), kind: kind, payload: payload, enqueued_at: new Date().toISOString() });
+    return q;
+  });
+}
+function dequeue(queueId) {
+  return updateQueue(function (q) { return q.filter(function (item) { return item.queue_id !== queueId; }); });
+}
+
+// Every marker record_id that still has a queue item waiting to be confirmed -- the "not yet
+// sent" indicator history.js shows next to a Sleep or Wake time. Covers both a fresh marker
+// (kind 'marker') and a queued edit to one (kind 'marker_edit'), since either leaves the
+// participant's own device unsure whether the Sheet has caught up yet.
+async function queuedRecordIds() {
+  var q = await getQueue();
+  var ids = {};
+  q.forEach(function (item) {
+    if (item.kind === 'marker' && item.payload) ids[item.payload.record_id] = true;
+    else if (item.kind === 'marker_edit' && item.payload && item.payload.event) {
+      ids[item.payload.event.record_id] = true;
+    }
+  });
+  return ids;
+}
+
+// Every survey_id that still has a queue item waiting to be confirmed -- the "not yet sent"
+// indicator history.js's per-night status shows once a survey has been submitted, skipped, or
+// abandoned locally but not yet acknowledged by the server.
+async function queuedSurveyIds() {
+  var q = await getQueue();
+  var ids = {};
+  q.forEach(function (item) {
+    if (item.kind === 'survey' && item.payload) ids[item.payload.survey_id] = true;
+  });
+  return ids;
+}
+
+function payloadForQueueItem(item) {
+  if (item.kind === 'marker') return toLogMarkerPayload(item.payload);
+  if (item.kind === 'marker_edit') return toUpdateMarkerPayload(item.payload.event, item.payload.client_edit_utc);
+  if (item.kind === 'survey') return toLogSurveyPayload(item.payload);
+  return null;
+}
+function senderForQueueItem(item) {
+  if (item.kind === 'marker') return logMarker;
+  if (item.kind === 'marker_edit') return updateMarker;
+  if (item.kind === 'survey') return logSurvey;
+  return null;
+}
+
+// Reasons the server will never accept no matter how many times the same item is resent. Left
+// queued, one of these would jam every later item behind it forever, so these are dropped (with
+// a message) rather than retried -- the same treatment section 14.1 already gives invalid_login,
+// extended to the completion-guard and edit-window reasons a survey resend can also hit.
+var QUEUE_TERMINAL_REASONS = [
+  'invalid_login', 'already_answered', 'edit_window_expired', 'invalid_payload', 'not_found'
+];
+
+// Drains the offline queue oldest-first, one item at a time. Nothing leaves the queue until the
+// server actually confirms it; a transport failure or a transient server reason (busy) halts the
+// drain until the next trigger -- boot when online, the 'online' event, or right after
+// enqueueing -- so a server problem cannot turn into a flood of retries, and items keep their
+// original order.
 async function flushQueue() {
   var q = await getQueue();
   if (!q.length) return;
-  var next = q.shift();
-  await setQueue(q);
-  sendEvent(next, function (ok, res) {
-    if (ok && res && res.invalid) {
-      toast(REASON_MESSAGES.invalid_login); // will never succeed until re-validated; don't requeue
+  var item = q[0];
+  var payload = payloadForQueueItem(item);
+  var sender = senderForQueueItem(item);
+  if (!payload || !sender) { await dequeue(item.queue_id); return flushQueue(); } // unrecognised kind
+
+  sender(payload, function (ok, res) {
+    if (!ok) return; // request never completed: stop the drain, retry later
+
+    if (res && res.ok) {
+      dequeue(item.queue_id).then(flushQueue);
       return;
     }
-    if (!ok) {
-      updateQueue(function (qq) { qq.push(res); return qq; });
-    } else {
-      flushQueue();
+    if (res && res.reason === 'device_not_recognized') {
+      softSignOut(REASON_MESSAGES.device_not_recognized); // stops the drain; queue is untouched
+      return;
     }
+    if (res && QUEUE_TERMINAL_REASONS.indexOf(res.reason) !== -1) {
+      toast(REASON_MESSAGES[res.reason] || 'This entry could not be sent.');
+      dequeue(item.queue_id).then(flushQueue);
+      return;
+    }
+    // Any other reason (busy, or one this build does not recognise): stop the drain, retry later.
   });
 }
 
-// append locally + push to server (with offline retry queue)
+// append locally + enqueue + attempt to send now (falls back to the offline queue automatically
+// if the attempt does not complete)
 async function recordEvent(ev) {
   await updateHistory(function (hist) { hist.unshift(ev); return hist; });
-  sendEvent(ev, function (ok, res) {
-    if (ok && res && res.invalid) {
-      toast(REASON_MESSAGES.invalid_login);
-      return;
-    }
-    if (!ok) {
-      updateQueue(function (q) { q.push(ev); return q; });
-    }
+  await enqueue('marker', ev);
+  flushQueue();
+}
+
+// Question IDs Q01-Q08 are the shipped Consensus Sleep Diary Core items (architecture.md
+// section 3.4.1); anything else visible was added by the researcher on QuestionsSetup. The
+// standalone build's own participant-authored questions (question_source 'participant') are
+// Phase 5 scope and do not exist yet.
+var DEFAULT_QUESTION_IDS = ['Q01', 'Q02', 'Q03', 'Q04', 'Q05', 'Q06', 'Q07', 'Q08'];
+function questionSourceFor(questionId) {
+  return DEFAULT_QUESTION_IDS.indexOf(questionId) !== -1 ? 'default' : 'researcher';
+}
+
+var surveyDraft = null;   // the in-progress survey; see initSurveyDraft
+var surveyQuestions = []; // the visible question list this draft is being answered against
+var surveyAnswerCounter = 1;
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
   });
+}
+
+// Reads the question list to render this survey against: the cached copy of getConfig's last
+// successful fetch first, so an offline participant still sees their study's own questions, then
+// a fresh network fetch to keep it current, then the hardcoded default as a last resort.
+async function loadSurveyQuestions() {
+  var cached = await getCachedConfig();
+  if (cached && Array.isArray(cached.questions) && cached.questions.length) {
+    surveyQuestions = cached.questions;
+  } else {
+    surveyQuestions = DEFAULT_QUESTIONS || [];
+  }
+  getConfig(function (cfg) {
+    if (cfg) {
+      if (Array.isArray(cfg.questions)) surveyQuestions = cfg.questions;
+      setCachedConfig(cfg);
+    }
+  }, function () {}); // offline: keep whatever loaded above
+  return surveyQuestions;
+}
+
+// One unanswered SurveyAnswers row per visible question, per architecture.md section 3.6: every
+// question shown gets a row, whether or not it is ever answered.
+function buildAnswerSkeleton(question, displayOrder) {
+  return {
+    record_id: uuid(),
+    question_id: question.question_id,
+    question_source: questionSourceFor(question.question_id),
+    answer_type: question.answer_type,
+    question_text_shown: question.display_text,
+    required: !!question.required,
+    display_order: displayOrder,
+    answer_order: '',
+    value: '',
+    value_number: '',
+    value_unit: '',
+    answered_utc: '',
+    edited_utc: '',
+    edit_count: 0,
+    time_to_answer_ms: ''
+  };
+}
+
+function findAnswer(questionId) {
+  return surveyDraft.answers.filter(function (a) { return a.question_id === questionId; })[0];
+}
+function findQuestion(questionId) {
+  return surveyQuestions.filter(function (q) { return q.question_id === questionId; })[0];
+}
+
+// Marks an answer's first value. Only called once per answer; later changes go through
+// markEdited instead, so answered_utc always names the moment the participant first responded,
+// per data-dictionary.md's "empty means shown but not answered."
+function markAnswered(answer) {
+  answer.answer_order = surveyAnswerCounter++;
+  answer.answered_utc = new Date().toISOString();
+  answer.time_to_answer_ms = Date.parse(answer.answered_utc) - Date.parse(surveyDraft.survey_opened_utc);
+}
+function markEdited(answer) {
+  answer.edited_utc = new Date().toISOString();
+  answer.edit_count = (answer.edit_count || 0) + 1;
+}
+
+// ----- building a fresh draft -----
+
+// identity: {study_id, participant_id, tz} (event.js's shape, not the vault session's). A
+// resumed survey_id (history.js's completion entry point) always starts from a fresh, empty
+// draft: history.js only offers resuming a record that is not locked, and an unlocked
+// skipped/abandoned record has zero answers by definition (isSurveyLocked), so there is nothing
+// to restore -- only the identifier (survey_id) is reused, so the eventual write updates the
+// existing Surveys row instead of adding a second one.
+function initSurveyDraft(surveyId, sleepDay, identity, sleepEvent, wakeEvent) {
+  surveyAnswerCounter = 1;
+  surveyDraft = {
+    survey_id: surveyId,
+    study_id: identity.study_id,
+    participant_id: identity.participant_id,
+    sleep_day: sleepDay,
+    sleep_record_id: sleepEvent ? sleepEvent.record_id : '',
+    wake_record_id: wakeEvent ? wakeEvent.record_id : '',
+    wake_marker_utc: wakeEvent ? wakeEvent.event_utc : '',
+    survey_opened_utc: new Date().toISOString(),
+    survey_ended_utc: '',
+    end_reason: '',
+    event_tz: identity.tz,
+    tz_offset_minutes: Math.round(tzOffsetMs(new Date(), identity.tz) / 60000),
+    answers: surveyQuestions.map(function (q, i) { return buildAnswerSkeleton(q, i + 1); })
+  };
+  applyPrefill(sleepEvent, wakeEvent);
+}
+
+// Q02/Q06-style questions (prefill_from SLEEP_MARKER/WAKE_MARKER) open already filled in from
+// the marker's own local time. The participant may change the answer; the marker itself never
+// changes, per architecture.md section 3.4.2.
+function applyPrefill(sleepEvent, wakeEvent) {
+  surveyDraft.answers.forEach(function (answer) {
+    var question = findQuestion(answer.question_id);
+    if (!question || !question.prefill_from) return;
+    var source = question.prefill_from === 'SLEEP_MARKER' ? sleepEvent
+      : question.prefill_from === 'WAKE_MARKER' ? wakeEvent : null;
+    if (!source) return;
+    answer.value = source.event_local;
+    answer.value_number = minutesFromMidnight(source.event_local);
+    answer.value_unit = 'hh:mm';
+    markAnswered(answer);
+  });
+}
+
+function minutesFromMidnight(localIso) {
+  var m = /T(\d{2}):(\d{2})/.exec(String(localIso || ''));
+  return m ? Number(m[1]) * 60 + Number(m[2]) : '';
+}
+
+// ----- rendering -----
+
+// `|| defaultValue` would silently turn a legitimate min_value of 0 into 1 (0 is falsy), so a
+// missing value is checked for explicitly rather than relied on to fall through.
+function numberOr(value, fallback) {
+  return value === '' || value == null ? fallback : Number(value);
+}
+
+function optionsForButtons(question) {
+  if (question.answer_type === 'boolean') {
+    return [{ value: 'Yes', label: 'Yes' }, { value: 'No', label: 'No' }];
+  }
+  var opts = [];
+  var min = numberOr(question.min_value, 1), max = numberOr(question.max_value, 5);
+  for (var v = min; v <= max; v++) {
+    opts.push({ value: String(v), label: String(v) });
+  }
+  return opts;
+}
+
+function renderControl(question, answer) {
+  var id = 'ctrl-' + question.question_id;
+  var label = escapeHtml(question.display_text);
+
+  if (question.input_style === 'slider') {
+    var min = Number(question.min_value) || 0, max = Number(question.max_value) || 10;
+    var current = answer.answered_utc ? Number(answer.value) : min;
+    return '' +
+      '<div class="slider-control">' +
+        '<input type="range" id="' + id + '" class="' + (answer.answered_utc ? '' : 'untouched') + '" ' +
+          'min="' + min + '" max="' + max + '" value="' + current + '" data-qid="' + question.question_id + '" ' +
+          'aria-label="' + label + '">' +
+        '<div class="slider-row">' +
+          '<button type="button" class="step-minus" data-qid="' + question.question_id + '" aria-label="Decrease">&minus;</button>' +
+          '<div class="slider-readout"><span>' + escapeHtml(question.min_label || '') + '</span>' +
+            '<span class="slider-value" id="val-' + question.question_id + '">' + (answer.answered_utc ? current : '') + '</span>' +
+            '<span>' + escapeHtml(question.max_label || '') + '</span></div>' +
+          '<button type="button" class="step-plus" data-qid="' + question.question_id + '" aria-label="Increase">+</button>' +
+        '</div>' +
+      '</div>';
+  }
+
+  if (question.input_style === 'stepper') {
+    var smin = Number(question.min_value) || 0, smax = Number(question.max_value) || 999;
+    var sval = answer.answered_utc ? answer.value : '';
+    var atMax = answer.answered_utc && Number(answer.value) === smax;
+    return '' +
+      '<div class="stepper-control">' +
+        '<button type="button" class="step-minus" data-qid="' + question.question_id + '" aria-label="Decrease">&minus;</button>' +
+        '<input type="number" inputmode="numeric" id="' + id + '" min="' + smin + '" max="' + smax + '" ' +
+          'value="' + sval + '" data-qid="' + question.question_id + '" aria-label="' + label + '">' +
+        '<button type="button" class="step-plus" data-qid="' + question.question_id + '" aria-label="Increase">+</button>' +
+        '<span class="stepper-unit" id="note-' + question.question_id + '">' +
+          (atMax ? (smax + ' or more') : escapeHtml(question.unit || '')) + '</span>' +
+      '</div>';
+  }
+
+  if (question.input_style === 'buttons') {
+    var options = optionsForButtons(question);
+    return '' +
+      '<fieldset class="buttons-control" data-qid="' + question.question_id + '">' +
+        '<legend class="visually-hidden">' + label + '</legend>' +
+        (question.min_label ? '<span class="button-end-label">' + escapeHtml(question.min_label) + '</span>' : '') +
+        '<div class="button-row">' + options.map(function (opt) {
+          var checked = answer.answered_utc && String(answer.value) === opt.value ? ' checked' : '';
+          return '<label class="button-option"><input type="radio" name="' + id + '" value="' + opt.value + '"' +
+            checked + ' data-qid="' + question.question_id + '"><span>' + escapeHtml(opt.label) + '</span></label>';
+        }).join('') + '</div>' +
+        (question.max_label ? '<span class="button-end-label">' + escapeHtml(question.max_label) + '</span>' : '') +
+      '</fieldset>';
+  }
+
+  if (question.answer_type === 'datetime') {
+    var dParts = answer.answered_utc ? /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(answer.value) : null;
+    return '' +
+      '<div class="datetime-control">' +
+        '<input type="date" id="' + id + '-date" data-qid="' + question.question_id + '" data-part="date" ' +
+          'value="' + (dParts ? dParts[1] : '') + '" aria-label="' + label + ' date">' +
+        '<input type="time" id="' + id + '-time" data-qid="' + question.question_id + '" data-part="time" ' +
+          'value="' + (dParts ? dParts[2] : '') + '" aria-label="' + label + ' time">' +
+      '</div>';
+  }
+
+  // 'time' -- the common case. The participant picks a clock time only; the calendar date
+  // follows from sleep_day, per architecture.md section 4.1.
+  var tParts = answer.answered_utc ? /T(\d{2}:\d{2})/.exec(answer.value) : null;
+  return '<input type="time" id="' + id + '" data-qid="' + question.question_id + '" ' +
+    'value="' + (tParts ? tParts[1] : '') + '" aria-label="' + label + '">';
+}
+
+function renderSurveyQuestions() {
+  var box = document.getElementById('survey-questions');
+  box.innerHTML = surveyQuestions.map(function (question) {
+    var answer = findAnswer(question.question_id);
+    return '' +
+      '<div class="question">' +
+        '<p class="q-text">' + escapeHtml(question.display_text) +
+          (question.required ? ' <span class="required-badge">Required</span>' : '') + '</p>' +
+        renderControl(question, answer) +
+      '</div>';
+  }).join('');
+  updateSurveyButtons();
+}
+
+function unansweredRequired() {
+  return surveyDraft.answers.filter(function (a) { return a.required && !a.answered_utc; });
+}
+function answeredCount() {
+  return surveyDraft.answers.filter(function (a) { return a.answered_utc; }).length;
+}
+
+// Skip is only offered while nothing has been answered yet; once anything has, walking away
+// would misrepresent engagement, so Cancel (which sends what exists as abandoned) takes its
+// place. Submit appears once every visible required question has an answer.
+function updateSurveyButtons() {
+  var count = answeredCount();
+  document.getElementById('btn-survey-skip').classList.toggle('hidden', count > 0);
+  document.getElementById('btn-survey-cancel').classList.toggle('hidden', count === 0);
+  document.getElementById('btn-survey-submit').disabled = unansweredRequired().length > 0;
+  document.getElementById('survey-required-error').textContent = '';
+}
+
+// ----- control interaction -----
+
+// Slider dragging and typing into a stepper's number field both fire many 'input' events in a
+// row. Rebuilding the whole question list on each one -- survey.js's usual pattern for any
+// other change -- would destroy and recreate the very control the participant has a finger or a
+// cursor in, losing the drag or the keystroke. Both update the answer and the small pieces of
+// their own markup directly instead; every other control (a single discrete tap or a native
+// picker committing a finished value) still goes through the full rebuild, which is simpler and
+// carries no such cost.
+function onSurveyInput(e) {
+  var target = e.target;
+  var qid = target.getAttribute('data-qid');
+  if (!qid) return;
+  var answer = findAnswer(qid);
+  var question = findQuestion(qid);
+  if (!answer || !question) return;
+  var wasAnswered = !!answer.answered_utc;
+
+  if (question.input_style === 'slider') {
+    if (target.value === '') return;
+    setAnswerFromClockOrNumber(question, answer, target.value);
+    if (!wasAnswered) markAnswered(answer); else markEdited(answer);
+    target.classList.remove('untouched');
+    var readout = document.getElementById('val-' + qid);
+    if (readout) readout.textContent = answer.value;
+    updateSurveyButtons();
+    return;
+  }
+
+  if (question.input_style === 'stepper') {
+    if (target.value === '') return;
+    setAnswerFromClockOrNumber(question, answer, target.value);
+    if (!wasAnswered) markAnswered(answer); else markEdited(answer);
+    updateStepperNote(question, answer);
+    updateSurveyButtons();
+    return;
+  }
+
+  var set;
+  if (question.answer_type === 'time') {
+    if (target.value === '') return;
+    set = setAnswerFromClockOrNumber(question, answer, target.value);
+  } else if (question.answer_type === 'datetime') {
+    // Only one of the date/time pair may have a value yet; wait for both before recording an
+    // answer, so half a datetime is never marked as though the participant had finished it.
+    set = setAnswerFromDatetimeParts(question, answer);
+  } else {
+    return; // radios are handled on 'change' below
+  }
+  if (!set) return;
+  if (!wasAnswered) markAnswered(answer); else markEdited(answer);
+  // A native time/date picker's own display already shows what was just chosen; only the
+  // Submit/Skip/Cancel state can change here, not anything the question list itself renders.
+  updateSurveyButtons();
+}
+
+function updateStepperNote(question, answer) {
+  var note = document.getElementById('note-' + question.question_id);
+  if (!note) return;
+  var max = Number(question.max_value) || 999;
+  note.textContent = Number(answer.value) === max ? (max + ' or more') : (question.unit || '');
+}
+
+function onSurveyChange(e) {
+  var target = e.target;
+  if (target.type !== 'radio') return;
+  var qid = target.getAttribute('data-qid');
+  var answer = findAnswer(qid);
+  var question = findQuestion(qid);
+  if (!answer || !question || !target.checked) return;
+  var wasAnswered = !!answer.answered_utc;
+
+  if (question.answer_type === 'boolean') {
+    answer.value = target.value;
+    answer.value_number = target.value === 'Yes' ? 1 : 0;
+    answer.value_unit = '';
+  } else {
+    answer.value = target.value;
+    answer.value_number = Number(target.value);
+    answer.value_unit = 'points';
+  }
+  if (!wasAnswered) markAnswered(answer); else markEdited(answer);
+  renderSurveyQuestions();
+}
+
+// @return {boolean} True if the answer was actually set.
+function setAnswerFromClockOrNumber(question, answer, rawValue) {
+  if (question.answer_type === 'time') {
+    var iso = localIsoForTimeAnswer(surveyDraft.sleep_day, rawValue, surveyDraft.event_tz);
+    answer.value = iso;
+    answer.value_number = minutesFromMidnight(iso);
+    answer.value_unit = 'hh:mm';
+    return true;
+  }
+  // stepper (duration_minutes, count) or a slider (scale, ordinal, count, duration_minutes)
+  var num = Number(rawValue);
+  answer.value = num;
+  answer.value_number = num;
+  answer.value_unit = question.answer_type === 'duration_minutes' ? 'minutes'
+    : (question.answer_type === 'scale' || question.answer_type === 'ordinal') ? 'points'
+    : (question.unit || '');
+  return true;
+}
+
+// @return {boolean} True only once both the date and the time sub-field carry a value.
+function setAnswerFromDatetimeParts(question, answer) {
+  var dateEl = document.getElementById('ctrl-' + question.question_id + '-date');
+  var timeEl = document.getElementById('ctrl-' + question.question_id + '-time');
+  if (!dateEl.value || !timeEl.value) return false;
+  var iso = localIsoForDatetimeAnswer(dateEl.value, timeEl.value, surveyDraft.event_tz);
+  answer.value = iso;
+  answer.value_number = minutesFromMidnight(iso);
+  answer.value_unit = 'hh:mm';
+  return true;
+}
+
+function onSurveyStep(e) {
+  var btn = e.target.closest('.step-minus, .step-plus');
+  if (!btn) return;
+  var qid = btn.getAttribute('data-qid');
+  var question = findQuestion(qid);
+  var answer = findAnswer(qid);
+  if (!question || !answer) return;
+  var min = Number(question.min_value) || 0, max = Number(question.max_value) || 999;
+  var current = answer.answered_utc ? Number(answer.value) : min;
+  var next = btn.classList.contains('step-minus') ? current - 1 : current + 1;
+  next = Math.max(min, Math.min(max, next));
+  var wasAnswered = !!answer.answered_utc;
+  answer.value = next;
+  answer.value_number = next;
+  answer.value_unit = question.answer_type === 'duration_minutes' ? 'minutes'
+    : question.answer_type === 'scale' || question.answer_type === 'ordinal' ? 'points'
+    : (question.unit || '');
+  if (!wasAnswered) markAnswered(answer); else markEdited(answer);
+  renderSurveyQuestions();
+}
+
+// ----- opening the screen -----
+
+async function openSurveyScreen(title) {
+  document.getElementById('survey-title').textContent = title;
+  renderSurveyQuestions();
+  show('screen-survey');
+}
+
+// Entry point 1: right after waking, for tonight's own survey.
+async function openSurveyForNight(sleepEvent, wakeEvent) {
+  var identity = getSessionIdentity();
+  if (!identity) return;
+  var sleepDay = sleepEvent ? sleepDayFromLocal(sleepEvent.event_local)
+    : findPrecedingSleepDayLocal(await getHistory(), wakeEvent.event_epoch_ms, wakeEvent.event_local);
+  await loadSurveyQuestions();
+  initSurveyDraft(uuid(), sleepDay, sessionForBuildEvent(identity), sleepEvent, wakeEvent);
+  await openSurveyScreen('Morning diary');
+}
+
+// Entry point 2: completing a skipped or missing survey from history, within edit_window_days of
+// the night itself (architecture.md section 10). night is {sleepDay, sleepEvent, wakeEvent,
+// existingRecord}, where existingRecord is the local surveys-collection entry if one already
+// exists (reused rather than starting a new survey_id) or null (a night with a marker and no
+// locally known survey at all).
+async function openSurveyForCompletion(night) {
+  var identity = getSessionIdentity();
+  if (!identity) return;
+  await loadSurveyQuestions();
+  var surveyId = night.existingRecord ? night.existingRecord.survey_id : uuid();
+  initSurveyDraft(surveyId, night.sleepDay, sessionForBuildEvent(identity), night.sleepEvent, night.wakeEvent);
+  await openSurveyScreen('Complete diary for ' + night.sleepDay);
+}
+
+function closeSurveyScreen() {
+  surveyDraft = null;
+  show('screen-home');
+  applyHomeState();
+}
+
+// ----- finishing: submit, skip, cancel -----
+
+async function persistAndSend(endReason) {
+  surveyDraft.survey_ended_utc = new Date().toISOString();
+  surveyDraft.end_reason = endReason;
+  var record = Object.assign({}, surveyDraft);
+  await updateSurveys(function (list) {
+    var i = list.findIndex(function (s) { return s.survey_id === record.survey_id; });
+    if (i === -1) list.push(record); else list[i] = record;
+    return list;
+  });
+  await enqueue('survey', record);
+  flushQueue();
+}
+
+async function doSurveySubmit() {
+  var missing = unansweredRequired();
+  if (missing.length) {
+    document.getElementById('survey-required-error').textContent =
+      'Please answer every required question before submitting.';
+    return;
+  }
+  await persistAndSend('submitted');
+  toast('Diary submitted');
+  closeSurveyScreen();
+}
+
+// Only reachable with zero answers so far (updateSurveyButtons hides the button otherwise).
+async function doSurveySkip() {
+  await persistAndSend('skipped');
+  toast('Diary skipped');
+  closeSurveyScreen();
+}
+
+// Only reachable with at least one answer already given; sends what exists immediately rather
+// than waiting for a later sweep to infer abandonment.
+async function doSurveyCancel() {
+  await persistAndSend('abandoned');
+  toast('Diary saved as abandoned');
+  closeSurveyScreen();
+}
+
+// ----- wire payload for the offline queue (state.js calls this by name) -----
+
+function toLogSurveyPayload(draft) {
+  return {
+    study_id: draft.study_id,
+    participant_id: draft.participant_id,
+    device_token: getSessionToken(),
+    survey_id: draft.survey_id,
+    target_sleep_day: draft.sleep_day,
+    sleep_record_id: draft.sleep_record_id || '',
+    wake_record_id: draft.wake_record_id || '',
+    wake_marker_utc: draft.wake_marker_utc || '',
+    survey_opened_utc: draft.survey_opened_utc,
+    survey_ended_utc: draft.survey_ended_utc || '',
+    end_reason: draft.end_reason,
+    event_tz: draft.event_tz || '',
+    tz_offset_minutes: draft.tz_offset_minutes || 0,
+    source: 'web',
+    app_version: APP_VERSION,
+    answers: draft.answers.map(function (a) {
+      return {
+        record_id: a.record_id, question_id: a.question_id, question_source: a.question_source,
+        answer_type: a.answer_type, question_text_shown: a.question_text_shown,
+        required: a.required, display_order: a.display_order, answer_order: a.answer_order,
+        value: a.value, value_number: a.value_number, value_unit: a.value_unit,
+        answered_utc: a.answered_utc, edited_utc: a.edited_utc, edit_count: a.edit_count,
+        time_to_answer_ms: a.time_to_answer_ms
+      };
+    })
+  };
+}
+
+// Whether a locally-known survey record is locked -- submitted outright, or ended with at least
+// one answer given -- mirroring logSurvey's own guard so history.js never offers a completion
+// entry point the server would refuse anyway.
+function isSurveyLocked(record) {
+  if (!record) return false;
+  if (record.end_reason === 'submitted') return true;
+  return (record.end_reason === 'skipped' || record.end_reason === 'abandoned')
+    && record.answers.some(function (a) { return a.answered_utc; });
 }

@@ -200,35 +200,53 @@ data key wrapped under a device key the page can use but not read, the token
 stored under the same key, and a silent resume on startup. Log out deletes that
 copy and the token and nothing else. Nobody is signed out for being offline.
 
-**Stage 4 — markers and the diary.**
+**Stage 4 — markers and the diary. Done.**
 
-- Sleep and wake markers, with unambiguous button labels and instructions.
-- Times stored as real local times with an offset.
-- The morning diary, with items 2 and 6 pre-filled from the markers and editable.
-- Question rendering for every answer type, including the 1-to-10 slider and its
-  four rules.
-- The seven-day edit window for markers; add-missing-only for surveys, completable
-  only while a survey holds no answers, per section 10.
-- `getConfig` returns the question list, so the survey can be rendered offline
-  from a cached copy.
+- Sleep and wake markers, with unambiguous button labels and instructions on both
+  the home screen and the sleeping overlay, not only in `aria-label` text.
+- Times stored as real local times with an offset (`toLocalIsoWithOffset` in
+  `src/logic/time.js`), replacing an earlier build of this stage that stamped a
+  human-readable string the server could not parse.
+- `getConfig` gains `questions`: every visible `QuestionsSetup` row, sorted by
+  `sort_order`, cached client-side through `cachedConfig` so the survey renders
+  offline from the last successful fetch.
+- The morning diary (`src/ui/survey.js`), with items 2 and 6 pre-filled from the
+  markers and editable, every answer type and `input_style` rendered per section
+  3.4.3 (including the slider's four rules), and required-question enforcement
+  client-side.
+- The seven-day edit window for markers, unchanged from Stage 2. For surveys,
+  `logSurvey` gains a completion guard: a locked survey (submitted, or ended with
+  at least one answer) refuses a resend with `already_answered`, and completing an
+  older night past `edit_window_days` is refused with `edit_window_expired`. A
+  history entry lets a skipped or missing survey be completed within that window,
+  never after it has locked.
 
-**Stage 5 — offline and polish.**
+**Stage 5 — offline and polish. Done.**
 
-- The offline queue, and the rule that a rejected ID is never retried. A queue
-  refused because the device was signed out is kept, not dropped, and sends after
-  the participant enters their PIN again.
-- Focus trap and focus restore on every dialog, including the two that never had
-  one.
-- Fix `.btn-primary`'s contrast in `styles.css`. White text on its
-  violet-to-indigo gradient measures about 4.27:1 at the violet end -- under the
-  4.5:1 AA threshold that applies here, since the button's 16px bold label is
-  normal text, not large text. Used by the login "Start" button and the edit-time
-  "Save" button. The landing page's equivalent button already uses a solid color
-  instead of this gradient for the same reason; carry that fix into the app.
+- The real offline queue (`src/ui/state.js`): one item per marker, marker edit, or
+  survey, credential attached fresh at send time rather than stored, drained
+  oldest-first. `invalid_login`, `already_answered`, `edit_window_expired`, and a
+  malformed payload are all dropped rather than retried, since none of them
+  changes on a later attempt and retrying would jam every later item behind
+  them; `device_not_recognized` instead stops the drain and keeps the queue,
+  resuming once the participant re-enters their PIN. See section 14.1.
+- A "not yet sent" indicator on any night or survey whose item is still queued,
+  and a boot-time and reconnect-triggered drain (the `online` event).
+- Focus trap and focus restore (`src/ui/dialog.js`) behind `openModal`/
+  `closeModal`/`showOverlay`, covering every dialog: the edit-time modal, the
+  change-PIN modal, and the sleeping overlay.
+- Fixed `.btn-primary`'s contrast in `styles.css`: replaced the violet-to-indigo
+  gradient (about 4.27:1 with white text at the violet end, under the 4.5:1 AA
+  threshold this 16px bold label needs) with the solid indigo already used in
+  `setupCompletePage_` in `Code.gs` (about 7.8:1), and added a `:focus-visible`
+  outline to every interactive control that did not already have one.
 
 **Done when** a participant can log a night end to end, offline and online, on a
 phone, without being asked for a PIN they did not choose to be asked for, and the
-values in the Sheet match what they typed.
+values in the Sheet match what they typed. Everything above has been verified by
+code review against the server contract and the data dictionary; none of it has
+been exercised against a live Apps Script deployment or a real phone yet (see
+Verification below).
 
 **Check the device session by hand**, because none of it is caught by reading the
 code: reopen the app after a full browser restart with the network off and land on
@@ -248,6 +266,21 @@ and the participant instructions have to say so.
 Ask for persistent storage after the first successful sign-in, in both builds.
 The study build turns out to be able to get it, at least sometimes. Treat a
 refusal as ordinary.
+
+**Verification still needed, against a real deployment and a real phone.** None of
+Stage 4 or 5 has run against a live Google Sheet or a device yet.
+
+- Deploy a fresh copy, add a participant, set a PIN, and confirm a full night
+  (Sleep, Wake, morning diary) lands in `SleepDiary`, `Surveys`, and
+  `SurveyAnswers` with matching `sleep_day` on all three.
+- Confirm a skipped survey stays completable for seven days, that completing it
+  fills the same row rather than adding a second one, and that a direct resend
+  after submitting returns `already_answered`.
+- Force airplane mode mid-flow, confirm the "not yet sent" indicator appears, and
+  confirm the queue drains in order on reconnect with no duplicate rows.
+- Keyboard-only traversal of every screen and dialog, 200% zoom / 320px reflow,
+  and a live screen-reader pass over login → PIN → Sleep → Wake → survey →
+  history, per section 9 of the specification.
 
 ---
 
@@ -321,13 +354,17 @@ layout is declared in one place and built from that declaration, and the server
 now records markers and surveys into it, computes `sleep_day`, checks PINs, and
 draws the four researcher charts.
 
-Phase 3 is under way. Local storage, the login screens, and the PIN screens exist;
-the participant-facing screens that call `logMarker`, `logSurvey`, and
-`updateMarker` do not yet, so the server can record data but nothing asks it to.
-The device-session work in stages 2 and 3 is a correction made during the phase
-rather than a late addition: it is what lets the app stay signed in without
-keeping the participant's PIN, and it changes the Sheet, which is why it happens
-now and could not happen after a study starts.
+Phase 3's five stages are complete: the build, device sessions on the server and
+in the app, markers and the morning diary, and the offline queue with its
+accessibility fixes. The device-session work in stages 2 and 3 was a correction
+made during the phase rather than a late addition: it is what lets the app stay
+signed in without keeping the participant's PIN, and it changes the Sheet, which
+is why it happened then and could not happen after a study starts. Stages 4 and 5
+are what actually lets a participant use the app: tapping Sleep and Wake writes a
+real marker, waking opens a prefilled morning diary, a missed survey can be
+completed later within the edit window, and a submission made offline queues and
+sends once the app is next online. None of Phase 3 has been exercised against a
+live deployment yet; see the verification notes above.
 
 ## Additional resources
 

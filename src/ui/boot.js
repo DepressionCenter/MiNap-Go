@@ -3,7 +3,8 @@
 // Author(s): Gabriel Mongefranco
 // Created: 2026-08-18
 // Last Modified: 2026-08-19
-// Summary: Startup: loads server config, wires DOM event listeners, and either resumes the last
+// Summary: Startup: loads server config, wires every screen's DOM event listeners (including
+//   the survey screen and the offline queue's 'online' trigger), and either resumes the last
 //   identity used on this device with no prompt, or shows the login screen pre-filled with it.
 // Notes: See README file for documentation and full license information.
 //
@@ -47,11 +48,27 @@ async function boot() {
   });
   document.getElementById('btn-back').addEventListener('click', function () { show('screen-home'); applyHomeState(); });
   document.getElementById('history-list').addEventListener('click', function (e) {
-    var btn = e.target.closest('.edit-time');
-    if (btn) openEditor(btn.getAttribute('data-id'));
+    var editBtn = e.target.closest('.edit-time');
+    if (editBtn) { openEditor(editBtn.getAttribute('data-id')); return; }
+    var completeBtn = e.target.closest('.complete-survey');
+    if (completeBtn) beginCompletion(completeBtn.getAttribute('data-sleep-day'));
   });
   document.getElementById('btn-edit-cancel').addEventListener('click', closeEditor);
   document.getElementById('btn-edit-save').addEventListener('click', saveEditor);
+
+  document.getElementById('survey-questions').addEventListener('input', onSurveyInput);
+  document.getElementById('survey-questions').addEventListener('change', onSurveyChange);
+  document.getElementById('survey-questions').addEventListener('click', onSurveyStep);
+  document.getElementById('btn-survey-submit').addEventListener('click', doSurveySubmit);
+  document.getElementById('btn-survey-skip').addEventListener('click', doSurveySkip);
+  document.getElementById('btn-survey-cancel').addEventListener('click', doSurveyCancel);
+
+  // Retries whatever is still queued the moment connectivity returns, rather than waiting for
+  // the participant to reopen the app or visit History. A no-op with no active session (nothing
+  // queued can exist before someone has signed in on this device).
+  window.addEventListener('online', function () {
+    if (getSessionIdentity()) flushQueue();
+  });
 
   var last = await getLastIdentity();
   if (last) {

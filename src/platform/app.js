@@ -4,8 +4,11 @@
 // Created: 2026-08-18
 // Last Modified: 2026-08-19
 // Summary: Environment adapter for the standalone build. There is no server in this build, so
-//   every function throws rather than returning a value -- a silent no-op would let a future
-//   caller believe a submission succeeded when nothing happened.
+//   every write function throws rather than returning a value -- a silent no-op would let a
+//   future caller believe a submission succeeded when nothing happened. getConfig is the one
+//   exception: it hands back a fixed copy of the Consensus Sleep Diary question set, since a
+//   build with no server has nothing else to ask. Real per-person question customization is a
+//   later phase.
 // Notes: See README file for documentation and full license information.
 //
 // Copyright © 2026 The Regents of the University of Michigan
@@ -20,20 +23,61 @@
 // You should have received a copy of the GNU General Public License along
 // with this program. If not, see <https://www.gnu.org/licenses/>.
 
-function sendEvent(payload, onDone) {
-  throw new Error('sendEvent is not available in the standalone build');
+// The eight Consensus Sleep Diary Core questions (Carney et al., 2012), shipped as the
+// standalone build's fixed default set -- values copied from buildQuestionDefaultRows_ in
+// src/server/Code.gs so the two builds' default wording, ranges, and prefill sources never
+// drift apart. Wording is provisional pending redistribution permission, per
+// docs/data-dictionary.md.
+var DEFAULT_QUESTIONS = [
+  { question_id: 'Q01', display_text: 'What time did you get into bed?', answer_type: 'time',
+    min_value: '', max_value: '', input_style: '', min_label: '', max_label: '', unit: '',
+    prefill_from: '', required: false, sort_order: 1 },
+  { question_id: 'Q02', display_text: 'What time did you try to go to sleep?', answer_type: 'time',
+    min_value: '', max_value: '', input_style: '', min_label: '', max_label: '', unit: '',
+    prefill_from: 'SLEEP_MARKER', required: false, sort_order: 2 },
+  { question_id: 'Q03', display_text: 'How long did it take you to fall asleep?',
+    answer_type: 'duration_minutes', min_value: 0, max_value: 600, input_style: 'stepper',
+    min_label: '', max_label: '', unit: 'minutes', prefill_from: '', required: false, sort_order: 3 },
+  { question_id: 'Q04',
+    display_text: 'How many times did you wake up, not counting your final awakening?',
+    answer_type: 'count', min_value: 0, max_value: 10, input_style: 'stepper', min_label: '',
+    max_label: '', unit: 'times', prefill_from: '', required: false, sort_order: 4 },
+  { question_id: 'Q05', display_text: 'In total, how long did these awakenings last?',
+    answer_type: 'duration_minutes', min_value: 0, max_value: 600, input_style: 'stepper',
+    min_label: '', max_label: '', unit: 'minutes', prefill_from: '', required: false, sort_order: 5 },
+  { question_id: 'Q06', display_text: 'What time was your final awakening?', answer_type: 'time',
+    min_value: '', max_value: '', input_style: '', min_label: '', max_label: '', unit: '',
+    prefill_from: 'WAKE_MARKER', required: false, sort_order: 6 },
+  { question_id: 'Q07', display_text: 'What time did you get out of bed for the day?',
+    answer_type: 'time', min_value: '', max_value: '', input_style: '', min_label: '',
+    max_label: '', unit: '', prefill_from: '', required: false, sort_order: 7 },
+  { question_id: 'Q08', display_text: 'How would you rate the quality of your sleep?',
+    answer_type: 'ordinal', min_value: 1, max_value: 5, input_style: 'buttons',
+    min_label: 'Very poor', max_label: 'Very good', unit: '', prefill_from: '', required: false,
+    sort_order: 8 }
+];
+
+function logMarker(payload, onDone) {
+  throw new Error('logMarker is not available in the standalone build');
 }
 
 function validateLogin(studyId, participantId, onSuccess, onFailure) {
   throw new Error('validateLogin is not available in the standalone build');
 }
 
-function updateEvent(payload, onSuccess, onFailure) {
-  throw new Error('updateEvent is not available in the standalone build');
+function updateMarker(payload, onDone) {
+  throw new Error('updateMarker is not available in the standalone build');
 }
 
+function logSurvey(payload, onDone) {
+  throw new Error('logSurvey is not available in the standalone build');
+}
+
+// The only function in this file that does not throw: a build with no server has nothing to ask,
+// so this hands back the fixed default question set instead. Matches gas.js's async signature
+// (onSuccess called with the config object) so boot.js's loadConfig needs no build-specific case.
 function getConfig(onSuccess, onFailure) {
-  throw new Error('getConfig is not available in the standalone build');
+  onSuccess({ editWindowDays: 7, appVersion: APP_VERSION, questions: DEFAULT_QUESTIONS });
 }
 
 function setPin(studyId, participantId, newPin, oldPin, onSuccess, onFailure) {

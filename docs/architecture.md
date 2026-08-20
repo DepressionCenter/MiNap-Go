@@ -1069,6 +1069,15 @@ API.
 `logMarker`, `logSurvey`, and `updateMarker` carry a device token, not a PIN. See
 section 5.4.
 
+**`logSurvey` refuses to overwrite a survey that is already locked** — submitted
+outright, or ended skipped or abandoned with at least one answer given — returning
+`already_answered` instead. It also enforces `edit_window_days` against the night
+the survey describes, the same as an edit to a marker (section 10), returning
+`edit_window_expired` once that night is too old. A brand-new `survey_id` names
+its night through an optional `target_sleep_day`, needed only when nothing else in
+the payload already implies it; once a Surveys row exists, its own `sleep_day` is
+authoritative and `target_sleep_day` is ignored.
+
 No function returns diary or survey data. There is no read path in version 1, not
 even one protected by a PIN. Recovery happens through file export and import
 instead.
@@ -1288,6 +1297,14 @@ Adding a survey after the fact needs care. `survey_opened_utc` and
 night it refers to carried in `sleep_day`. Otherwise completion rates look better
 than they were.
 
+Unlike a marker edit, a survey completion's edit window is checked against the
+night it describes (`sleep_day`) as of the moment the server receives it, not
+against when the participant actually completed it. A completion attempted just
+inside the window but queued offline long enough to arrive after it closes is
+refused on delivery rather than honored — a narrower version of the problem
+`updateMarker`'s `client_edit_utc` solves for markers, not yet solved the same
+way for surveys. Worth revisiting if it turns out to matter in practice.
+
 A missing survey may be added for the same seven days markers may be edited, and
 for the same reason: without a cap, participants fill in two weeks the night
 before their final visit. A survey may be completed only while it holds no
@@ -1438,9 +1455,15 @@ the app still thinks it failed and will send it again. The server treats a
 a second row, and reports success. A flaky connection can therefore never produce
 duplicate nights.
 
-One case never retries: a submission rejected because the Study ID or Participant
-ID is no longer allowed. That will never succeed, so it is dropped from the queue
-and the participant is told to contact the study team.
+Some rejections never retry, because no amount of resending changes the answer:
+the Study ID or Participant ID is no longer allowed; a survey the server already
+considers locked (`already_answered`); an edit or a survey completion outside
+`edit_window_days` (`edit_window_expired`); or a malformed payload. Each of these
+is dropped from the queue immediately, with a message telling the participant what
+happened, rather than left to jam every later item behind it forever. A device the
+server no longer recognises (`device_not_recognized`) is different: the queue is
+left untouched and the drain stops until the participant re-enters their PIN,
+because that item, unlike the others, will succeed once a fresh token exists.
 
 Nothing is removed from the queue until the server confirms it. An entry the
 participant can see on their phone but that has not yet reached the Sheet is

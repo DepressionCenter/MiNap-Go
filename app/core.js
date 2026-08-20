@@ -584,7 +584,7 @@ function logout(studyId, participantId) {
 // not wired to any button in Phase 3 -- kept for completeness, not as a "forget this device"
 // feature nobody has asked for.
 function wipeProfile(studyId, participantId) {
-  return Promise.all(['profile', 'history', 'queue', 'cachedConfig', 'device_key'].map(function (name) {
+  return Promise.all(['profile', 'history', 'surveys', 'queue', 'cachedConfig', 'device_key'].map(function (name) {
     return deleteRecord(collectionKey(studyId, participantId, name));
   }));
 }
@@ -620,6 +620,22 @@ function updateQueue(mutatorFn) {
   return updateCollection('queue', mutatorFn, []);
 }
 
+// Local record of every survey this device knows about, keyed within the array by survey_id --
+// not by night, because a night can outlive several attempts (skipped, then completed later)
+// under the same survey_id. This is what lets history.js and survey.js tell "skipped, still
+// completable" apart from "submitted, locked" without asking the server, and what the
+// completion flow reads to decide whether it is starting fresh or resuming a draft.
+function getSurveys() {
+  if (!session) return Promise.reject(new Error('locked'));
+  return readEncrypted(session.dataKey, collectionKey(session.studyId, session.participantId, 'surveys'), []);
+}
+function setSurveys(arr) {
+  return updateSurveys(function () { return arr; });
+}
+function updateSurveys(mutatorFn) {
+  return updateCollection('surveys', mutatorFn, []);
+}
+
 // Cached copy of getConfig()'s last successful result (edit window + question list), read
 // before ever falling back to the generic hardcoded defaults, so a participant opening the app
 // offline days after their last successful fetch still sees their study's actual questions.
@@ -640,6 +656,20 @@ function isEditable(ev) {
   return ageDays <= editWindowDays;
 }
 
+// Mirrors the server's daysSinceSleepDay_: whole calendar days between a sleep_day and today,
+// with no time-of-day component -- a survey is measured by the night it describes, not by an
+// instant, the same "measured from the stored value" principle isEditable applies to markers.
+// Lets the history screen hide a completion entry point before ever asking the server, using the
+// same day count logSurvey's own guard enforces.
+function isSleepDayCompletable(sleepDay) {
+  var s = String(sleepDay).split('-').map(Number);
+  var sleepDayUtc = Date.UTC(s[0], s[1] - 1, s[2]);
+  var t = new Date().toISOString().slice(0, 10).split('-').map(Number);
+  var todayUtc = Date.UTC(t[0], t[1] - 1, t[2]);
+  var ageDays = Math.round((todayUtc - sleepDayUtc) / 86400000);
+  return ageDays <= editWindowDays;
+}
+
 var APP_VERSION = '1.0.0';
 
 function uuid() {
@@ -653,20 +683,149 @@ function uuid() {
 // identity is a plain {study_id, participant_id, tz} object, not the vault's own in-memory
 // session -- kept distinctly named so the two are never confused once every src/data and
 // src/logic file is concatenated into one script scope by build.py.
-function buildEvent(type, identity, epochMs) {
+//
+// Field names (marker, event_utc, event_local, event_tz) match logMarker's payload exactly, so
+// marker-payload.js can pass this object straight through with only the credential added.
+function buildEvent(marker, identity, epochMs) {
   var ms = epochMs || Date.now();
-  var d = new Date(ms);
   return {
     record_id: uuid(),
     study_id: identity.study_id,
     participant_id: identity.participant_id,
-    event_type: type,
-    event_epoch_ms: ms,
-    event_iso_utc: d.toISOString(),
+    marker: marker,
+    event_epoch_ms: ms, // local-only convenience for sorting/pairing; never sent to the server
+    event_utc: new Date(ms).toISOString(),
     event_tz: identity.tz,
-    event_local: d.toLocaleString('en-US', { timeZone: identity.tz, hour12: true }),
+    event_local: toLocalIsoWithOffset(ms, identity.tz),
     app_version: APP_VERSION
   };
+}
+
+// Matches logMarker's payload exactly (src/server/Code.gs). study_id/participant_id come from
+// the event itself rather than the session, so a queued marker still sends the identity it was
+// recorded under even if the session has since changed.
+function toLogMarkerPayload(event) {
+  return {
+    study_id: event.study_id,
+    participant_id: event.participant_id,
+    device_token: getSessionToken(),
+    record_id: event.record_id,
+    marker: event.marker,
+    event_local: event.event_local,
+    event_tz: event.event_tz,
+    event_utc: event.event_utc,
+    source: 'web',
+    app_version: APP_VERSION
+  };
+}
+
+// Matches updateMarker's payload. client_edit_utc is the instant the edit was made on the
+// device, not when it happens to reach the server -- an edit made inside the edit window but
+// queued offline is judged by when it was made, per section 10 of the architecture
+// specification, so this has to be captured once, at edit time, and carried with the queued item
+// rather than recomputed when the queue finally drains.
+function toUpdateMarkerPayload(editedEvent, clientEditUtc) {
+  return {
+    study_id: editedEvent.study_id,
+    participant_id: editedEvent.participant_id,
+    device_token: getSessionToken(),
+    record_id: editedEvent.record_id,
+    event_local: editedEvent.event_local,
+    event_tz: editedEvent.event_tz,
+    event_utc: editedEvent.event_utc,
+    client_edit_utc: clientEditUtc,
+    source: 'web',
+    app_version: APP_VERSION
+  };
+}
+
+// Walks local history oldest-first, closing each SLEEP with the next WAKE it meets. A SLEEP with
+// no WAKE yet (still asleep, or the pair was interrupted) surfaces with wake: null; a WAKE with
+// no preceding SLEEP (the very first entry on a device, or a missed tap) surfaces with
+// sleep: null. Returned newest-first, matching how the history screen lists nights.
+function pairNights(events) {
+  var asc = events.slice().sort(function (a, b) { return a.event_epoch_ms - b.event_epoch_ms; });
+  var nights = [];
+  var openSleep = null;
+  asc.forEach(function (e) {
+    if (e.marker === 'SLEEP') {
+      if (openSleep) nights.push({ sleep: openSleep, wake: null });
+      openSleep = e;
+    } else {
+      nights.push({ sleep: openSleep, wake: e });
+      openSleep = null;
+    }
+  });
+  if (openSleep) nights.push({ sleep: openSleep, wake: null });
+  return nights.reverse();
+}
+
+// Mirrors sleepDayFromWallClock_ exactly: a night starting before noon local time belongs to the
+// previous calendar day. Takes plain wall-clock components rather than a Date built in the
+// browser's own zone, so a participant traveling away from their study time zone still gets the
+// date that belongs to the clock they read, not the date the device happens to be sitting in.
+function sleepDayFromWallClock(year, month, day, hour) {
+  var d = new Date(Date.UTC(year, month - 1, day));
+  if (hour < 12) d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// The inverse of sleepDayFromWallClock: given a night and a clock time on it, which calendar
+// date does that clock time fall on? A time before noon belongs to the morning after the night
+// started; noon onward belongs to the same evening, per architecture.md section 4.1.
+function dateForClockOnSleepDay(sleepDay, hour) {
+  var s = String(sleepDay).split('-').map(Number);
+  var d = new Date(Date.UTC(s[0], s[1] - 1, s[2]));
+  if (hour < 12) d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+// A survey's `time` question only asks for a clock reading (architecture.md section 3.4); the
+// calendar date is derived from the night being described, via dateForClockOnSleepDay, then
+// combined with the participant's time zone into the stored local-ISO-with-offset form.
+function localIsoForTimeAnswer(sleepDay, hhmm, tz) {
+  var m = /^(\d{2}):(\d{2})/.exec(String(hhmm || ''));
+  if (!m) return null;
+  var hour = Number(m[1]), minute = Number(m[2]);
+  var dateStr = dateForClockOnSleepDay(sleepDay, hour);
+  var d = dateStr.split('-').map(Number);
+  return toLocalIsoWithOffset(epochFromWallTime(d[0], d[1], d[2], hour, minute, tz), tz);
+}
+
+// A survey's `datetime` question asks for the date directly, so no sleep_day derivation applies.
+function localIsoForDatetimeAnswer(dateStr, hhmm, tz) {
+  var d = String(dateStr).split('-').map(Number);
+  var m = /^(\d{2}):(\d{2})/.exec(String(hhmm || ''));
+  if (!m) return null;
+  return toLocalIsoWithOffset(epochFromWallTime(d[0], d[1], d[2], Number(m[1]), Number(m[2]), tz), tz);
+}
+
+// Reads the date and hour straight out of a local ISO string (as toLocalIsoWithOffset produces,
+// or as the datetime-local edit field's "YYYY-MM-DDTHH:mm" value already is) without ever
+// constructing a browser-local Date from it, which would reinterpret the wall-clock numbers
+// through whatever zone the device itself is in.
+function sleepDayFromLocal(localIso) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(localIso || ''));
+  if (!m) return null;
+  return sleepDayFromWallClock(Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4]));
+}
+
+// Mirrors findPrecedingSleepDay_: the sleep_day a WAKE at or after beforeEpochMs should carry is
+// the most recent SLEEP's own sleep_day, or -- if this device holds no SLEEP before it at all --
+// the noon rule applied to the WAKE's own local time.
+//
+// @param {Array<Object>} events Local history entries, each carrying marker, event_epoch_ms,
+//     and event_local. Order does not matter; every SLEEP is considered.
+// @param {number} beforeEpochMs The WAKE's own instant. A SLEEP at or before this counts.
+// @param {string} fallbackLocalIso The WAKE's own event_local, used only if no SLEEP qualifies.
+// @return {?string} 'YYYY-MM-DD', or null if fallbackLocalIso cannot be parsed either.
+function findPrecedingSleepDayLocal(events, beforeEpochMs, fallbackLocalIso) {
+  var mostRecent = null;
+  (events || []).forEach(function (e) {
+    if (!e || e.marker !== 'SLEEP' || e.event_epoch_ms > beforeEpochMs) return;
+    if (!mostRecent || e.event_epoch_ms > mostRecent.event_epoch_ms) mostRecent = e;
+  });
+  return mostRecent ? sleepDayFromLocal(mostRecent.event_local) : sleepDayFromLocal(fallbackLocalIso);
 }
 
 function fmtClock(epochMs, tz) {
@@ -717,4 +876,26 @@ function epochFromWallTime(y, mo, d, h, mi, tz) {
   var epoch = guess - offset;
   offset = tzOffsetMs(new Date(epoch), tz);
   return guess - offset;
+}
+
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+// Format an instant as "YYYY-MM-DDTHH:mm:ss±HH:mm" in the given IANA tz -- the local-time-with-
+// offset form architecture.md section 4.1 requires for every stored clock time (markers and
+// survey answers alike). Built from the same Intl parts and tzOffsetMs that
+// toDatetimeLocalValue and epochFromWallTime already use, so all three stay consistent with
+// each other.
+function toLocalIsoWithOffset(epochMs, tz) {
+  var date = new Date(epochMs);
+  var dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+  var p = dtf.formatToParts(date).reduce(function (acc, x) { acc[x.type] = x.value; return acc; }, {});
+  var offsetMinutes = Math.round(tzOffsetMs(date, tz) / 60000);
+  var sign = offsetMinutes < 0 ? '-' : '+';
+  var abs = Math.abs(offsetMinutes);
+  return p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute + ':' + p.second +
+    sign + pad2(Math.floor(abs / 60)) + ':' + pad2(abs % 60);
 }

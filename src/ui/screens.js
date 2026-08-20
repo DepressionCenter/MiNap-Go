@@ -3,7 +3,8 @@
 // Author(s): Gabriel Mongefranco
 // Created: 2026-08-18
 // Last Modified: 2026-08-19
-// Summary: Screen show/hide, toasts, and the timezone dropdown, plus the shared modal helpers.
+// Summary: Screen show/hide, toasts, and the timezone dropdown, plus the shared modal helpers
+//   (focus trap and restore live in dialog.js, wired in behind these).
 // Notes: See README file for documentation and full license information.
 //
 // Copyright © 2026 The Regents of the University of Michigan
@@ -26,17 +27,22 @@ function show(id) {
   });
 }
 function showOverlay(on) {
-  document.getElementById('sleep-overlay').classList.toggle('hidden', !on);
+  var el = document.getElementById('sleep-overlay');
+  el.classList.toggle('hidden', !on);
+  if (on) trapFocus(el); else releaseFocus();
 }
 
-// Shows/hides one of the modal dialogs. Focus-trap and focus-restore are not implemented yet;
-// every dialog in the app is meant to route through these two functions so that work only has
-// to be written once.
+// Shows/hides one of the modal dialogs, trapping and restoring focus around it. Every dialog in
+// the app routes through these two functions, so that work is written once rather than per
+// dialog.
 function openModal(id) {
-  document.getElementById(id).classList.remove('hidden');
+  var el = document.getElementById(id);
+  el.classList.remove('hidden');
+  trapFocus(el);
 }
 function closeModal(id) {
   document.getElementById(id).classList.add('hidden');
+  releaseFocus();
 }
 
 var toastTimer = null;

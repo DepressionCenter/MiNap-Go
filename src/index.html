@@ -4,7 +4,7 @@ index.html
 Author(s): Gabriel Mongefranco
 Created: 2026-07-09
 Last Modified: 2026-08-19
-Summary: Shared HTML shell for the MiNap Go web app UI (login, home, history, sleeping overlay). build.py packages this into gas/Index.html for the Apps Script build; the standalone build uses its own placeholder shell (see index.placeholder.html) until the installable app is built.
+Summary: Shared HTML shell for the MiNap Go web app UI (login, home, history, sleeping overlay, morning diary). build.py packages this into gas/Index.html for the Apps Script build; the standalone build uses its own placeholder shell (see index.placeholder.html) until the installable app is built.
 Notes: See README file for documentation and full license information.
 
 Copyright © 2026 The Regents of the University of Michigan
@@ -129,6 +129,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         <span class="big-glyph">&#127769;</span>
         <span class="big-label">Go to sleep</span>
       </button>
+      <p class="note">Tap this the moment you start trying to fall asleep -- not when you get into bed.</p>
 
       <button id="btn-history" class="link center">View history</button>
     </section>
@@ -142,10 +143,25 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
       <div id="history-list" class="history"></div>
     </section>
 
+    <!-- SURVEY: the morning diary. Opens right after Wake, prefilled from that night's markers,
+         or from a history entry to complete a survey that was skipped or never started. -->
+    <section id="screen-survey" class="screen hidden">
+      <header class="home-head">
+        <h2 id="survey-title">Morning diary</h2>
+      </header>
+      <div id="survey-questions" class="survey-questions"></div>
+      <p id="survey-required-error" class="field-error" role="alert"></p>
+      <div class="survey-actions">
+        <button id="btn-survey-cancel" class="link hidden" type="button">Cancel</button>
+        <button id="btn-survey-skip" class="link" type="button">Skip for now</button>
+        <button id="btn-survey-submit" class="btn btn-primary" type="button">Submit</button>
+      </div>
+    </section>
+
   </main>
 
   <!-- SLEEPING overlay: full screen, stays until Wake is tapped -->
-  <div id="sleep-overlay" class="overlay hidden" role="dialog" aria-label="Sleeping">
+  <div id="sleep-overlay" class="overlay hidden" role="dialog" aria-label="Sleeping" tabindex="-1">
     <span class="z z1">z</span>
     <span class="z z2">z</span>
     <span class="z z3">z</span>
@@ -157,11 +173,12 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
         <span class="big-glyph">&#9728;&#65039;</span>
         <span class="big-label">Wake up</span>
       </button>
+      <p class="overlay-hint">Tap this the moment you wake for the last time -- getting out of bed is asked separately, in the diary.</p>
     </div>
   </div>
 
   <!-- EDIT TIME modal: adjust a sleep/wake entry's date & time, within the edit window -->
-  <div id="edit-modal" class="modal hidden" role="dialog" aria-label="Edit time">
+  <div id="edit-modal" class="modal hidden" role="dialog" aria-label="Edit time" tabindex="-1">
     <div class="modal-card">
       <h3 id="edit-modal-title">Edit time</h3>
       <label class="field">
@@ -176,7 +193,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>.
   </div>
 
   <!-- CHANGE PIN modal -->
-  <div id="change-pin-modal" class="modal hidden" role="dialog" aria-label="Change PIN">
+  <div id="change-pin-modal" class="modal hidden" role="dialog" aria-label="Change PIN" tabindex="-1">
     <div class="modal-card">
       <h3>Change PIN</h3>
       <label class="field">

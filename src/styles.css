@@ -4,7 +4,9 @@ styles.css
 Author(s): Gabriel Mongefranco
 Created: 2026-07-09
 Last Modified: 2026-08-19
-Summary: Styles for the MiNap Go web app UI, shared by both builds. build.py wraps this in <style> tags for gas/Stylesheet.html and copies it as-is for app/styles.css.
+Summary: Styles for the MiNap Go web app UI, shared by both builds, including the morning
+  diary's controls. build.py wraps this in <style> tags for gas/Stylesheet.html and copies it
+  as-is for app/styles.css.
 Notes: See README file for documentation and full license information.
 
 Copyright © 2026 The Regents of the University of Michigan
@@ -120,11 +122,26 @@ body {
   animation: spin 0.7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* Solid rather than the violet-to-indigo gradient this replaced: white text on the gradient's
+   violet end measures about 4.27:1, under the 4.5:1 AA threshold for this button's 16px bold
+   label (normal text, not large text). Solid indigo measures about 7.8:1. Matches the fix
+   already applied in setupCompletePage_ in src/server/Code.gs. */
 .btn-primary {
   color: #fff;
-  background: linear-gradient(135deg, var(--violet), var(--indigo));
+  background: var(--indigo);
 }
 .btn-primary:active { transform: scale(0.98); }
+
+.btn:focus-visible,
+.link:focus-visible,
+.big:focus-visible,
+.edit-time:focus-visible,
+.complete-survey:focus-visible,
+.step-minus:focus-visible,
+.step-plus:focus-visible {
+  outline: 3px solid var(--violet);
+  outline-offset: 2px;
+}
 
 .link {
   background: none;
@@ -202,6 +219,7 @@ body {
 .overlay-glyph { font-size: 64px; line-height: 1; filter: drop-shadow(0 0 18px rgba(160,150,255,0.5)); }
 .overlay-title { margin: 14px 0 4px; font-size: 24px; font-weight: 700; color: #efedff; letter-spacing: 1px; }
 .overlay-sub { margin: 0 0 28px; font-size: 13px; color: #8c89b8; }
+.overlay-hint { margin: 18px auto 0; max-width: 30ch; font-size: 12px; color: #8c89b8; }
 
 .z {
   position: absolute;
@@ -260,6 +278,143 @@ body {
   vertical-align: middle;
 }
 .edit-time.edited { color: #d6453f; }
+.not-sent { color: var(--amber-deep); font-weight: 700; font-size: 11px; }
+
+.complete-survey {
+  display: block;
+  margin-top: 6px;
+  background: none;
+  border: none;
+  color: var(--violet);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 6px 0;
+  min-height: 44px;
+}
+.survey-done { display: block; margin-top: 4px; font-size: 12px; color: var(--muted); }
+
+/* Survey (morning diary) controls */
+.survey-questions { display: flex; flex-direction: column; gap: 24px; }
+.question { display: flex; flex-direction: column; gap: 10px; }
+.q-text { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.4; }
+.required-badge {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--amber-deep);
+  background: #fdf1de;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+#survey-questions input[type="time"],
+#survey-questions input[type="date"] {
+  font-size: 16px;
+  padding: 13px 14px;
+  border: 1.5px solid var(--line);
+  border-radius: 14px;
+  background: #fbfaff;
+  color: var(--ink);
+  width: 100%;
+  min-height: 44px;
+}
+.datetime-control { display: flex; gap: 8px; }
+.datetime-control input { flex: 1; }
+
+.stepper-control { display: flex; align-items: center; gap: 10px; }
+.stepper-control input[type="number"] {
+  width: 76px;
+  text-align: center;
+  font-size: 16px;
+  padding: 10px;
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  min-height: 44px;
+}
+.stepper-unit { font-size: 13px; color: var(--muted); min-width: 80px; }
+
+.step-minus, .step-plus {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: #fbfaff;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--indigo);
+  cursor: pointer;
+}
+
+.slider-control { display: flex; flex-direction: column; gap: 10px; }
+.slider-row { display: flex; align-items: center; gap: 10px; }
+.slider-readout {
+  flex: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.slider-value { font-size: 16px; font-weight: 700; color: var(--ink); }
+input[type="range"] { flex: 1; width: 100%; height: 44px; accent-color: var(--violet); }
+/* An untouched slider shows no thumb, so a default position is never recorded as a response
+   (architecture.md section 3.4.3). Opacity, not visibility: hidden -- the hit area stays live so
+   the first tap or drag still sets a value. */
+input[type="range"].untouched::-webkit-slider-thumb { opacity: 0; }
+input[type="range"].untouched::-moz-range-thumb { opacity: 0; }
+
+.buttons-control { border: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.buttons-control legend { padding: 0; }
+.button-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.button-end-label { font-size: 12px; color: var(--muted); }
+.button-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  background: #fbfaff;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+}
+.button-option input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+}
+.button-option:has(input:checked) { border-color: var(--violet); background: #efecfd; color: var(--indigo); }
+.button-option:focus-within { outline: 3px solid var(--violet); outline-offset: 2px; }
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.survey-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 16px;
+  margin-top: 4px;
+}
 
 /* Edit time modal */
 .modal {

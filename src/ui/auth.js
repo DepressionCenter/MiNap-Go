@@ -39,7 +39,12 @@ var REASON_MESSAGES = {
   pin_too_short: 'Choose a PIN of at least ' + PIN_MIN_LENGTH + ' digits.',
   not_set: 'No PIN is on file yet for this participant.',
   device_not_recognized: 'Please enter your PIN again on this device.',
-  offline: 'You need a connection to do this. Check your connection and try again.'
+  offline: 'You need a connection to do this. Check your connection and try again.',
+  already_answered: 'This diary was already completed.',
+  edit_window_expired: 'This is too old to edit or complete now.',
+  not_found: 'That entry could not be found. It may have been removed.',
+  busy: 'The study server is busy right now. This will be sent automatically shortly.',
+  invalid_payload: 'This entry could not be sent. Please contact your study team.'
 };
 
 var MSG_LOGIN_FAILED = 'Unable to log in. Please verify the Study ID and Participant ID are correct.';

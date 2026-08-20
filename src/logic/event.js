@@ -3,8 +3,10 @@
 // Author(s): Gabriel Mongefranco
 // Created: 2026-08-18
 // Last Modified: 2026-08-19
-// Summary: The Sleep/Wake event object shape, shared by both builds. No browser or Apps
-//   Script globals; identical in both builds.
+// Summary: The Sleep/Wake marker object shape, shared by both builds. Field names match the
+//   logMarker/updateMarker payload contract in src/server/Code.gs exactly, so nothing between
+//   here and the server has to translate one name into another. No browser or Apps Script
+//   globals; identical in both builds.
 // Notes: See README file for documentation and full license information.
 //
 // Copyright © 2026 The Regents of the University of Michigan
@@ -32,18 +34,20 @@ function uuid() {
 // identity is a plain {study_id, participant_id, tz} object, not the vault's own in-memory
 // session -- kept distinctly named so the two are never confused once every src/data and
 // src/logic file is concatenated into one script scope by build.py.
-function buildEvent(type, identity, epochMs) {
+//
+// Field names (marker, event_utc, event_local, event_tz) match logMarker's payload exactly, so
+// marker-payload.js can pass this object straight through with only the credential added.
+function buildEvent(marker, identity, epochMs) {
   var ms = epochMs || Date.now();
-  var d = new Date(ms);
   return {
     record_id: uuid(),
     study_id: identity.study_id,
     participant_id: identity.participant_id,
-    event_type: type,
-    event_epoch_ms: ms,
-    event_iso_utc: d.toISOString(),
+    marker: marker,
+    event_epoch_ms: ms, // local-only convenience for sorting/pairing; never sent to the server
+    event_utc: new Date(ms).toISOString(),
     event_tz: identity.tz,
-    event_local: d.toLocaleString('en-US', { timeZone: identity.tz, hour12: true }),
+    event_local: toLocalIsoWithOffset(ms, identity.tz),
     app_version: APP_VERSION
   };
 }

@@ -2,9 +2,10 @@
 // time.js
 // Author(s): Gabriel Mongefranco
 // Created: 2026-08-18
-// Last Modified: 2026-08-18
-// Summary: Timezone and epoch-millisecond conversions used by history rendering and time
-//   editing in both builds. No browser or Apps Script globals; identical in both builds.
+// Last Modified: 2026-08-19
+// Summary: Timezone and epoch-millisecond conversions used by history rendering, time editing,
+//   and marker/survey payload formatting in both builds. No browser or Apps Script globals;
+//   identical in both builds.
 // Notes: See README file for documentation and full license information.
 //
 // Copyright © 2026 The Regents of the University of Michigan
@@ -67,4 +68,26 @@ function epochFromWallTime(y, mo, d, h, mi, tz) {
   var epoch = guess - offset;
   offset = tzOffsetMs(new Date(epoch), tz);
   return guess - offset;
+}
+
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+
+// Format an instant as "YYYY-MM-DDTHH:mm:ss±HH:mm" in the given IANA tz -- the local-time-with-
+// offset form architecture.md section 4.1 requires for every stored clock time (markers and
+// survey answers alike). Built from the same Intl parts and tzOffsetMs that
+// toDatetimeLocalValue and epochFromWallTime already use, so all three stay consistent with
+// each other.
+function toLocalIsoWithOffset(epochMs, tz) {
+  var date = new Date(epochMs);
+  var dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+  var p = dtf.formatToParts(date).reduce(function (acc, x) { acc[x.type] = x.value; return acc; }, {});
+  var offsetMinutes = Math.round(tzOffsetMs(date, tz) / 60000);
+  var sign = offsetMinutes < 0 ? '-' : '+';
+  var abs = Math.abs(offsetMinutes);
+  return p.year + '-' + p.month + '-' + p.day + 'T' + p.hour + ':' + p.minute + ':' + p.second +
+    sign + pad2(Math.floor(abs / 60)) + ':' + pad2(abs % 60);
 }
