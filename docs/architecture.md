@@ -202,6 +202,15 @@ Multiple studies live in one Sheet by putting different values in `study_id`. A
 Participant ID leaked from one study cannot be used in another, because login
 checks the pair.
 
+Provisioning adds a "Generate Participant ID" button to this tab: an image the
+researcher clicks to fill the next open row with a random ID and set `enabled` to
+`Yes`, rather than typing one by hand. The letters it draws from skip characters
+easy to misread on paper or a screen (`I`/`1`/`L`, `O`/`0`, and look-alike pairs
+such as `B`/`8`), because a participant retypes this ID at every login. The
+function behind the button only acts when triggered from inside the Sheet itself;
+it refuses if reached any other way, since it writes to the column that authorizes
+login.
+
 The two things a researcher can clear here are not the same thing, and section
 5.5 spells out the difference. Clearing the PIN cells starts PIN setup again and
 makes the copy of the diary on the participant's own device unreadable. Clearing

@@ -344,6 +344,7 @@ const WORKBOOK = {
       frozenRows: 1,
       appendOnly: false,
       validationRows: DROPDOWN_GROWABLE_ROWS, // rows keep growing as participants are added
+      hasParticipantIdButton: true, // ensureTab_ creates the "Generate Participant ID" image
       columns: [
         { header: 'study_id', width: 110,
           note: 'Your study ID. Give it to participants at enrollment. Several studies can '
@@ -1051,6 +1052,7 @@ function ensureTab_(ss, tab, position) {
   if (tab.columns && tab.columns.length) ensureTable_(sh, tab);
   if (tab.blocks) { ensureCalcBlocks_(ss, sh, tab); ensureCalcFormulas_(sh); }
   if (tab.filterCell) ensureDashboardControls_(sh, tab);
+  if (tab.hasParticipantIdButton) ensureParticipantIdGeneratorButton_(sh);
 }
 
 /**

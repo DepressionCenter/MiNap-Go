@@ -3,7 +3,7 @@
 # build.py
 # Author(s): Gabriel Mongefranco
 # Created: 2026-08-18
-# Last Modified: 2026-08-18
+# Last Modified: 2026-08-19
 # Summary: Packages src/ into gas/ (what a researcher pastes into an Apps Script project) and
 #   app/ (what the site serves). Python standard library only -- no Node, no package manager,
 #   nothing that talks to Google. Run with --check to verify the committed gas/ and app/ trees
@@ -210,6 +210,8 @@ def build_gas():
 
     out['Code.gs'] = build_copy(SRC / 'server' / 'Code.gs', 'js', 'js', 'Code.gs',
                                  'src/server/Code.gs')
+    out['SheetFunctions.gs'] = build_copy(SRC / 'server' / 'SheetFunctions.gs', 'js', 'js',
+                                           'SheetFunctions.gs', 'src/server/SheetFunctions.gs')
 
     out['appsscript.json'] = read(SRC / 'appsscript.json')
 
